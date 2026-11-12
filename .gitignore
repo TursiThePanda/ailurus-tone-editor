@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+/backups/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+/build/
+/dist/
+
+# Private design diary (kept out of the public history)
+/DESIGN.md

@@ -1,0 +1,63 @@
+{
+  "fill": {
+    "automatic-gradient": "extended-srgb:0.70980,0.32549,0.18039,1.00000"
+  },
+  "fill-specializations": [
+    {
+      "value": {
+        "automatic-gradient": "extended-srgb:0.70980,0.32549,0.18039,1.00000"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "automatic-gradient": "extended-srgb:0.36078,0.14902,0.08627,1.00000"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "panda.png",
+          "name": "panda",
+          "glass": false
+        },
+        {
+          "image-name": "hardware.png",
+          "name": "hardware",
+          "glass": false
+        },
+        {
+          "image-name": "enclosure.png",
+          "name": "enclosure",
+          "glass": false,
+          "fill-specializations": [
+            {
+              "value": {
+                "solid": "extended-srgb:0.16863,0.16471,0.15686,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "extended-srgb:0.70980,0.32549,0.18039,1.00000"
+              }
+            }
+          ]
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}

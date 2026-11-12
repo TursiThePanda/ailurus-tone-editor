@@ -1,0 +1,42 @@
+[project]
+name = "ailurus-tone-editor"
+version = "0.1.0"
+description = "Ailurus Tone Editor: open editor for the BOSS GX-10 with live AI control over MCP. Reads Roland's parameter tables from the installed BOSS TONE STUDIO."
+readme = "README.md"
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE"]
+authors = [{ name = "David Urban" }]
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "python-rtmidi>=1.5",
+    "mini-racer>=0.14",
+    "mcp>=2.3,<3",
+    "uvicorn>=0.31",
+    "starlette>=0.48",
+    "pywebview>=6.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pillow",   # tools/make_icon.py
+    "pyinstaller>=6.22",   # packaging/
+    "pytest>=8", "ruff>=0.8"]
+
+[project.scripts]
+ailurus-tone = "ailurus_tone.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["ailurus_tone*"]
+
+[tool.setuptools.package-data]
+gx10 = ["web/*", "help/*.json"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

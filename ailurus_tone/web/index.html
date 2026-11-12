@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ailurus Tone Editor</title>
+<link rel="icon" type="image/png" href="/static/icon.png">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="bar">
+  <span id="conn" class="conn off" data-help="Connection to the GX-10 over USB."></span>
+  <span id="connText" class="muted">Not connected</span>
+  <span id="patchLabel" class="patch"></span>
+  <span id="edited" class="badge warn hidden" data-help="What you hear differs from the patch stored in this slot. Draft 1 cannot save yet.">edited, not saved</span>
+  <span class="grow"></span>
+  <button id="undoBtn" title="Undo (Cmd/Ctrl+Z)">Undo</button>
+  <button id="redoBtn" title="Redo (Cmd/Ctrl+Shift+Z)">Redo</button>
+  <button id="backupBtn" data-help="Back up all 198 user patches into the default backup folder.">Back up</button>
+  <button id="exportBtn" data-help="Back up all patches into a folder you choose.">Export to…</button>
+  <button id="settingsBtn" aria-label="Settings">Settings</button>
+</header>
+
+<div id="message" class="message hidden"></div>
+
+<main class="layout">
+  <aside class="patches">
+    <input id="search" type="search" placeholder="Search patches">
+    <div id="patchList" class="list"></div>
+  </aside>
+
+  <section class="editor">
+    <div class="label">Signal chain</div>
+    <div id="chain" class="chain"></div>
+    <div id="fxPanel" class="fx">
+      <div class="empty muted">Plug the GX-10 straight into the computer and quit BOSS TONE STUDIO.</div>
+    </div>
+  </section>
+
+  <aside class="changes">
+    <div class="label" data-help="Everything that happened to the sound: your edits, the AI's, knobs turned on the unit, undo and patch switches. Kept on disk; the AI reads it with gx_history.">History</div>
+    <div id="changeList" class="list"></div>
+    <div id="backupState" class="small muted"></div>
+    <div class="small muted foot">MCP: http://127.0.0.1:8710/mcp</div>
+  </aside>
+</main>
+
+<dialog id="settings">
+  <form method="dialog">
+    <h3>Settings</h3>
+    <label class="small muted">Default backup folder</label>
+    <div class="row"><input id="backupDir" type="text"><button type="button" id="pickDir">Choose…</button></div>
+    <div id="settingsErr" class="small err"></div>
+    <div class="row end"><button value="cancel">Close</button><button type="button" id="saveSettings">Save</button></div>
+  </form>
+</dialog>
+
+<div id="tip" class="tip hidden"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
