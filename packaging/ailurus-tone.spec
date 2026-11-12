@@ -12,9 +12,9 @@ BUNDLE_ID = "io.github.tursithepanda.ailurus-tone-editor"
 FEED_URL = os.environ.get("AILURUS_FEED_URL") or \
     "https://github.com/TursiThePanda/ailurus-tone-editor/releases/latest/download/appcast.xml"
 # Every update must be signed with this key's private half (login Keychain, account
-# "ailurus-tone", and the repository secret SPARKLE_ED_PRIVATE_KEY).
+# "ailurus-tone-editor", and the repository secret SPARKLE_ED_PRIVATE_KEY).
 SPARKLE_PUBLIC_KEY = os.environ.get("AILURUS_SPARKLE_PUBLIC_KEY") or \
-    "lpWSxlpiuX5W2Q2NbfJTBK16yng8KVmzy5acmBPL+/M="  # env = throwaway key, local tests only
+    "SXtYux7aYW1uqXfGmQ53urbMglj07Rl8THr8bc+8Wx4="  # env = throwaway key, local tests only
 # Sparkle compares CFBundleVersion: version + commit count, set by build_macos.sh
 BUILD_VERSION = os.environ.get("AILURUS_BUILD_VERSION") or VERSION
 
