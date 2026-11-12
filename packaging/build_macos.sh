@@ -40,6 +40,9 @@ fi
 ditto $SPK/Sparkle.framework "$APP/Contents/Frameworks/Sparkle.framework"
 cp $SPK/LICENSE "$APP/Contents/Resources/Sparkle-LICENSE.txt"
 cp LICENSE "$APP/Contents/Resources/"
+# the standard About panel (app menu) shows Credits.rtf under the version; RTF without
+# explicit colours follows light/dark mode, HTML would stay black
+cp packaging/Credits.rtf "$APP/Contents/Resources/"
 
 # Ad-hoc signature (no Developer ID yet). Extended attributes make codesign refuse.
 # Sparkle accepts an update only if it is signed "the same" as the running app; an ad-hoc
