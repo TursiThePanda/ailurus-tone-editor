@@ -1,0 +1,101 @@
+# Builds Ailurus Tone Editor on GitHub's macOS runner and attaches the DMG to the release.
+#
+# Release: bump `version` in pyproject.toml, add docs/release-notes/<version>.md, commit, then
+#   git tag -a v<version> -m "Ailurus Tone Editor <version>" && git push origin main --follow-tags
+# The workflow creates the release if it does not exist yet and uploads
+# Ailurus-Tone-Editor-<version>.dmg, its .sha256 and appcast.xml - the Sparkle update feed
+# the app reads from the latest release, signed with the EdDSA key in the repository secret
+# SPARKLE_ED_PRIVATE_KEY (its public half is SPARKLE_PUBLIC_KEY in packaging/ailurus-tone.spec).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build (e.g. v0.1.1)"
+        required: true
+      publish:
+        description: "Attach the DMG to the release (off = trial run, DMG kept as a run artifact)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # macOS 27 + Xcode 27 on Apple Silicon; Xcode's actool compiles the layered icon
+    runs-on: xcode-27
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0 # the build number is the commit count
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Version matches the tag
+        run: |
+          v="v$(python -c 'import tomllib;print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          if [ "$v" != "$TAG" ]; then echo "pyproject.toml says $v but the tag is $TAG"; exit 1; fi
+          test -f "docs/release-notes/${TAG#v}.md" || { echo "missing docs/release-notes/${TAG#v}.md"; exit 1; }
+
+      - name: Dependencies and tests
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --quiet -e ".[dev]"
+          .venv/bin/python -m pytest -q
+
+      - name: Build
+        run: packaging/build_macos.sh
+
+      - name: Checksum
+        run: cat "dist/Ailurus-Tone-Editor-${TAG#v}.dmg.sha256" >> "$GITHUB_STEP_SUMMARY"
+
+      # Sparkle update feed: sign the DMG with our EdDSA key and describe it in
+      # appcast.xml (with the release notes rendered to HTML for Sparkle's window).
+      - name: Signed update feed (appcast.xml)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SPARKLE_ED_PRIVATE_KEY" ]; then
+            echo "::error::secret SPARKLE_ED_PRIVATE_KEY is not set"; exit 1
+          fi
+          v="${TAG#v}"
+          mkdir -p build/feed
+          cp "dist/Ailurus-Tone-Editor-$v.dmg" build/feed/
+          gh api markdown -f mode=gfm -f text="$(cat "docs/release-notes/$v.md")" > "build/feed/Ailurus-Tone-Editor-$v.html"
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | build/sparkle/bin/generate_appcast \
+            --ed-key-file - --embed-release-notes \
+            --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/" \
+            --link "https://github.com/${GITHUB_REPOSITORY}" \
+            -o dist/appcast.xml build/feed
+          grep -q 'sparkle:edSignature=' dist/appcast.xml
+
+      - name: Keep the DMG as a run artifact (trial run)
+        if: github.event_name == 'workflow_dispatch' && !inputs.publish
+        uses: actions/upload-artifact@v7
+        with:
+          name: Ailurus-Tone-Editor-${{ env.TAG }}
+          path: |
+            dist/Ailurus-Tone-Editor-*.dmg*
+            dist/appcast.xml
+
+      - name: Attach to the release
+        if: github.event_name == 'push' || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "Ailurus Tone Editor ${TAG#v}" \
+              --notes-file "docs/release-notes/${TAG#v}.md" --verify-tag
+          fi
+          gh release upload "$TAG" "dist/Ailurus-Tone-Editor-${TAG#v}.dmg" \
+            "dist/Ailurus-Tone-Editor-${TAG#v}.dmg.sha256" dist/appcast.xml --clobber

@@ -34,6 +34,14 @@ Apple Silicon, macOS 13+). The app is ad-hoc signed, not notarized: after downlo
 macOS refuses the first start - open System Settings → Privacy & Security → "Open Anyway".
 BOSS TONE STUDIO for GX-10 must still be installed (its tables are read at runtime).
 
+## Updates
+
+The app checks for a new version once a day and on demand (*Ailurus Tone Editor → Check
+for Updates…*), using [Sparkle](https://sparkle-project.org). The feed is `appcast.xml` on
+the latest GitHub release; every update is verified with an EdDSA signature before it is
+installed, and an update installed this way does not trigger "Open Anyway" again.
+Releases are built by `.github/workflows/release.yml` when a `v*` tag is pushed.
+
 ## MCP
 
 Streamable HTTP at `http://127.0.0.1:8710/mcp` while the app runs. Tools: `gx_status`,
@@ -52,7 +60,7 @@ Claude Code: `claude mcp add --transport http ailurus-tone http://127.0.0.1:8710
 - Drag effects to reorder a straight chain.
 - Bulk backup of all 198 user patches (U01-1..U66-3) to the default folder or a chosen one.
 - Not yet: Save / Save as / Restore, `.tsl` import/export, Compare, Windows/Linux packaging,
-  automatic updates, notarized build, MCP bearer token, divider/splitter branch layout.
+  notarized build, MCP bearer token, divider/splitter branch layout.
 
 ## Layout
 
@@ -68,7 +76,9 @@ Claude Code: `claude mcp add --transport http ailurus-tone http://127.0.0.1:8710
     ailurus_tone/help/          short hover help texts (en, cs) - our own words
     ailurus_tone/history.py     activity log (what changed, by whom), read by the AI
     tools/make_icon.py          builds the app icon (Icon Composer layers, icns, ico)
-    packaging/                  PyInstaller spec + build_macos.sh (.app and .dmg)
+    ailurus_tone/updater.py     Sparkle automatic updates (packaged macOS app only)
+    packaging/                  PyInstaller spec + build_macos.sh (.app and .dmg, bundles Sparkle)
+    .github/workflows/          release build: DMG + signed appcast.xml on a v* tag
     tests/                      unit tests, no GX-10 needed
 
 ## Licence

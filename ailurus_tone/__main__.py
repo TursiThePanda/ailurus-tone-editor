@@ -19,7 +19,7 @@ import uvicorn
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
-from . import api, mcp_tools
+from . import api, mcp_tools, updater
 from .state import State
 
 HOST, PORT = "127.0.0.1", 8710
@@ -92,7 +92,13 @@ def main(argv=None):
         webview.create_window("Ailurus Tone Editor", f"http://{HOST}:{port}/", js_api=WindowAPI(),
                               width=1440, height=900, min_size=(1000, 660))
         set_dock_icon()
-        webview.start()  # blocks on the main thread until the window closes
+        menu = []
+        if updater.available():
+            from webview.menu import Menu, MenuAction
+            menu = [Menu("__app__", [MenuAction(
+                "Check for Updates…", lambda: updater.on_main_thread(updater.check_now))])]
+        # blocks on the main thread until the window closes; the hook runs once Cocoa is up
+        webview.start(lambda: updater.on_main_thread(updater.start), menu=menu)
         server.should_exit = True
     finally:
         state.log.flush()
