@@ -1,9 +1,9 @@
 """Finding a unit's BOSS TONE STUDIO in a folder the user chose, with fake install trees."""
 import pytest
 
-from ailurus_tone.bts import GX10_BTS
-from ailurus_tone.katana_bts import KATANA3_BTS
 from ailurus_tone.locate import BTSError, _path_in, locate, search_under
+from ailurus_tone.units.gx10_bts import GX10_BTS
+from ailurus_tone.units.katana3_bts import KATANA3_BTS
 
 
 def fake_gx(base):

@@ -19,19 +19,18 @@ writes a memory. Switching patch discards the edits, as on the amp itself.
 """
 from __future__ import annotations
 
-import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from .bts import BTSError
-from .history import ActivityLog
-from .katana_bts import KatanaTables, encode
-from .roland import RolandPort, add7, from7
+from ..locate import BTSError
+from ..roland import add7, from7
+from ..rolandbts import decode as decode_raw
+from ..unit import Change, RolandUnit
+from .katana3_bts import KATANA3_BTS, KatanaTables, encode, find_katana_root
 
 PORT_NAME = "KATANA3"
 EDIT_BUFFER = [0x20, 0, 0, 0]
 SETUP = [0, 0, 0, 0]
-EDITOR_MODE = [0x7F, 0, 0, 1]
 PATCH_SELECT = [0x7F, 0, 1, 0]
 PATCH_WRITE = [0x7F, 0, 1, 4]          # only listened for (the player stored on the amp)
 NUM_PATCHES = 9                       # PANEL + A:CH1..A:CH4 + B:CH1..B:CH4
@@ -51,17 +50,8 @@ def patch_base(n: int) -> list[int]:
 
 
 def decode(block: list[int], p: dict) -> int:
-    o, kind, n = p["offset"], p["kind"], p["n"]
-    raw_b = block[o:o + n]
-    if kind == "nibbles":
-        raw = 0
-        for x in raw_b:
-            raw = (raw << 4) | (x & 15)
-    elif kind == "byte7":
-        raw = (raw_b[0] << 7) | raw_b[1]
-    else:
-        raw = raw_b[0]
-    return raw - p["ofs"]
+    o = p["offset"]
+    return decode_raw(block[o:o + p["n"]], p["kind"], p["ofs"])
 
 
 # Panel sections. (title, css colour or None = variation colour, switch (block, offset) or None,
@@ -86,18 +76,6 @@ CHAIN_ID = {s[5]: i for i, s in enumerate(SECTIONS) if s[5]}
 
 
 @dataclass
-class Change:
-    fx: int
-    param: str
-    old: int
-    new: int
-    who: str
-    block: str = ""
-    offset: int = 0
-    t: float = field(default_factory=time.time)
-
-
-@dataclass
 class Entry:
     """One parameter as shown in a section: its name there and where it lives in the patch."""
     name: str
@@ -107,27 +85,21 @@ class Entry:
     live: bool = False
 
 
-class Katana:
+class Katana(RolandUnit):
     kind = "katana3"
     title = "KATANA Gen 3"
+    aliases = ("katana", "katana gen3", "katana3")
+    hint = "Plug it in over USB; it needs Roland's KATANA3 Driver."
+    bts = KATANA3_BTS
     port_name = PORT_NAME
-    readonly = False
-    supports_backup = True
     backup_prefix = "KATANA-Gen3"
 
-    def __init__(self, tables: KatanaTables, on_event=None, log: ActivityLog | None = None):
-        self.t = tables
-        self.log = log or ActivityLog(None)
-        self.port = RolandPort(PORT_NAME, tables.header, on_unsolicited=self._unsolicited)
-        self.on_event = on_event or (lambda kind, data: None)
-        self.lock = threading.RLock()
-        self.current: int | None = None
-        self.temp: dict[str, list[int]] | None = None
-        self.saved: dict[str, list[int]] | None = None
-        self.names: list[str] = []
-        self.history: dict[int, dict] = {}
-        self.edited = False
-        self.error: str | None = None
+    @classmethod
+    def load_tables(cls, bts_folder: str | None) -> KatanaTables:
+        return KatanaTables(find_katana_root(bts_folder))
+
+    def __init__(self, tables: KatanaTables, on_event=None, log=None):
+        super().__init__(tables, on_event=on_event, log=log)
         self._selecting: int | None = None     # patch we asked for; the amp echoes it back
         labels = next((r for r in tables.resources if r and r[0] == "PANEL" and len(r) == NUM_PATCHES), None)
         if not labels:
@@ -137,34 +109,13 @@ class Katana:
                             if not b.startswith("ASSIGN") and "READONLY" not in b and b != "COM"] + ["COM"]
         self._block_at = sorted((from7(off), b) for b, (off, _, _) in tables.blocks.items())
 
-    # ---- connection ----------------------------------------------------------
-    def connect(self):
-        with self.lock:
-            self.port.open()
-            self.port.dt1(EDITOR_MODE, [1], pause=0.2)   # the amp now reports panel changes by itself
-            self.names = self.read_names()
-            self.reload()
-
-    def disconnect(self):
-        with self.lock:
-            try:
-                self.port.dt1(EDITOR_MODE, [0])
-            except Exception:
-                pass
-            self.port.close()
-
-    @property
-    def connected(self) -> bool:
-        return self.port.connected
-
     # ---- reads ---------------------------------------------------------------
     def _rq(self, base, block: str) -> list[int]:
         off, _, size = self.t.blocks[block]
         return self.port.rq1(add7(base, from7(off)), size)
 
     def read_names(self) -> list[str]:
-        return [bytes(self._rq(patch_base(n), "COM")[:16]).decode("ascii", "replace").rstrip()
-                for n in range(NUM_PATCHES)]
+        return [self.name_of(self._rq(patch_base(n), "COM")) for n in range(NUM_PATCHES)]
 
     def read_patch(self, base) -> dict[str, list[int]]:
         return {b: self._rq(base, b) for b in self.read_blocks}
@@ -173,14 +124,11 @@ class Katana:
         b = self.port.rq1(SETUP, 2)          # INTEGER2x4: two nibbles
         return ((b[0] & 15) << 4) | (b[1] & 15)
 
-    def reload(self):
-        with self.lock:
-            self.current = self.read_current_number()
-            self.temp = self.read_patch(EDIT_BUFFER)
-            self.saved = self.read_patch(patch_base(self.current)) if 0 <= self.current < NUM_PATCHES else None
-            self.history.setdefault(self.current, {"undo": [], "redo": []})
-            self._update_edited()
-        self.on_event("patch", {"current": self.current})
+    def read_current_sound(self) -> dict[str, list[int]]:
+        return self.read_patch(EDIT_BUFFER)
+
+    def read_saved(self, n: int):
+        return self.read_patch(patch_base(n)) if 0 <= n < NUM_PATCHES else None
 
     def poll(self):
         """Safety net next to editor mode: re-read the patch number and the panel-facing blocks."""
@@ -200,10 +148,7 @@ class Katana:
         if changed:
             self.on_event("change", {"from": "unit"})
 
-    def _update_edited(self):
-        self.edited = self.saved is not None and self._masked(self.temp) != self._masked(self.saved)
-
-    def _masked(self, patch) -> dict:
+    def live_masked(self, patch) -> dict:
         out = {k: list(v) for k, v in patch.items()}
         for b in out:
             _, table, _ = self.t.blocks[b]
@@ -364,21 +309,11 @@ class Katana:
                     "color": self._color(i, self.temp), "on": self._on(i, self.temp), "params": params,
                     "readonly": False}
 
-    def label(self) -> str:
-        return self.labels[self.current] if self.current is not None and 0 <= self.current < NUM_PATCHES else "?"
+    def slot_labels(self) -> list[str]:
+        return self.labels
 
     def patch_name(self) -> str:
-        return bytes(self.temp["COM"][:16]).decode("ascii", "replace").rstrip()
-
-    def patch_list(self) -> list[dict]:
-        return [{"slot": i, "label": self.labels[i], "name": n} for i, n in enumerate(self.names)]
-
-    def parse_slot(self, slot: str) -> int:
-        s = slot.upper().replace(" ", "")
-        for i, lab in enumerate(self.labels):
-            if lab == s:
-                return i
-        raise ValueError(f"slot must be one of: {', '.join(self.labels)}")
+        return self.name_of(self.temp["COM"])
 
     def summary(self) -> dict:
         with self.lock:
@@ -386,11 +321,9 @@ class Katana:
                       "color": self._color(i, self.temp), "on": self._on(i, self.temp),
                       "in_chain": SECTIONS[i][5] is not None}
                      for i in self.order()]
-            h = self.history.get(self.current, {"undo": [], "redo": []})
             return {"current": self.current, "label": self.label(), "name": self.patch_name(),
-                    "edited": self.edited, "chain": chain, "can_undo": bool(h["undo"]),
-                    "can_redo": bool(h["redo"]), "straight": False, "readonly": False,
-                    "changes": [c.__dict__ for c in h["undo"][-50:]][::-1]}
+                    "edited": self.edited, "chain": chain, "straight": False, "readonly": False,
+                    **self.history_summary()}
 
     # ---- live edits (edit buffer only; never stored) ---------------------------
     def _find(self, fx: int, name: str) -> Entry:
@@ -421,9 +354,9 @@ class Katana:
                 raise ValueError(f"{e.name} must be {lo}..{hi}, got {value}")
             old = decode(self.temp[e.block], e.p)
             self._write(e.block, e.p, value)
-            self._update_edited()
+            self.update_edited()
             if record and old != value:
-                self._remember(Change(fx, e.name, old, value, who, e.block, e.p["offset"]))
+                self.remember(Change(fx, e.name, old, value, who, e.block, e.p["offset"]))
                 self._log_set(who, "set", fx, e, old, value)
         self.on_event("change", {"fx": fx})
         return {"fx": fx, "param": e.name, "old": old, "new": value, "display": self._display(e, value)}
@@ -439,44 +372,17 @@ class Katana:
             if old == new:
                 return
             e = self._find(fx, param)
-            self._remember(Change(fx, e.name, old, new, who, e.block, e.p["offset"]))
+            self.remember(Change(fx, e.name, old, new, who, e.block, e.p["offset"]))
             self._log_set(who, "set", fx, e, old, new)
         self.on_event("change", {"fx": fx})
 
-    def _remember(self, c: Change):
-        h = self.history.setdefault(self.current, {"undo": [], "redo": []})
-        h["undo"].append(c)
-        h["redo"].clear()
-
-    def _apply(self, c: Change, value: int):
+    def apply_change(self, c: Change, value: int, who: str):
         """Undo/redo write straight to the stored address: the section may look different by now."""
-        p = self._prm(c.block, c.offset)
-        self._write(c.block, p, value)
-        self._update_edited()
+        self._write(c.block, self._prm(c.block, c.offset), value)
+        self.update_edited()
 
-    def undo(self, who: str = "you") -> dict | None:
-        with self.lock:
-            h = self.history.get(self.current)
-            if not h or not h["undo"]:
-                return None
-            c = h["undo"].pop()
-            self._apply(c, c.old)
-            h["redo"].append(c)
-            self._log(who, "undo", fx=c.fx, type=SECTIONS[c.fx - 1][0], param=c.param, old=c.new, new=c.old)
-        self.on_event("change", {"fx": c.fx})
-        return c.__dict__
-
-    def redo(self, who: str = "you") -> dict | None:
-        with self.lock:
-            h = self.history.get(self.current)
-            if not h or not h["redo"]:
-                return None
-            c = h["redo"].pop()
-            self._apply(c, c.new)
-            h["undo"].append(c)
-            self._log(who, "redo", fx=c.fx, type=SECTIONS[c.fx - 1][0], param=c.param, old=c.old, new=c.new)
-        self.on_event("change", {"fx": c.fx})
-        return c.__dict__
+    def log_change(self, who: str, action: str, c: Change, old, new):
+        self._log(who, action, fx=c.fx, type=SECTIONS[c.fx - 1][0], param=c.param, old=old, new=new)
 
     def set_chain(self, *_a, **_k):
         raise ValueError("The KATANA has nine fixed signal orders: set AMP's CHAIN parameter instead "
@@ -532,7 +438,7 @@ class Katana:
         """The amp changed its own sound (knob, footswitch): take it over and log what moved."""
         old_patch = {k: list(v) for k, v in self.temp.items()}
         self.temp[block] = new
-        self._update_edited()
+        self.update_edited()
         for i in range(len(SECTIONS)):
             for e in self._entries(i, old_patch):
                 if e.block != block or e.live:
@@ -551,15 +457,12 @@ class Katana:
                      type=SECTIONS[fx - 1][0], param=e.name, old=old, new=new, display=self._display(e, new))
 
     # ---- backup -------------------------------------------------------------------
-    def backup_slots(self) -> list[tuple[int, str]]:
-        return [(n, self.labels[n]) for n in range(NUM_PATCHES)]   # PREVIEW (PATCH(10)) is not a memory
-
     def read_slot(self, n: int) -> dict[str, list[int]]:
         return {b: self._rq(patch_base(n), b) for b in self.t.blocks if "READONLY" not in b}
 
     @staticmethod
     def slot_name(blocks) -> str:
-        return bytes(blocks["COM"][:16]).decode("ascii", "replace").rstrip()
+        return RolandUnit.name_of(blocks["COM"])
 
     def backup_layout(self) -> list:
         return [[b, list(off), size] for b, (off, _, size) in self.t.blocks.items() if "READONLY" not in b]

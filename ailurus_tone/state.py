@@ -15,26 +15,18 @@ import time
 from pathlib import Path
 
 from .backup import BulkBackup, config_dir, load_config, save_config
-from .bts import BTSError, Tables, find_bts_root
-from .device import GX10
 from .history import ActivityLog
-from .katana import Katana
-from .katana_bts import KatanaTables, find_katana_root
+from .locate import BTSError
 from .roland import NotConnected, RolandPort
+from .unit import RolandUnit
+from .units import BY_KIND
 
 HELP_DIR = Path(__file__).parent / "help"
 
-# id -> (title, how to build it, how to connect it); order = preference for the first active unit.
-# The hint is shown only next to that unit (switcher tooltip, a tool that names it); the main
-# message stays generic so it holds for any number of supported units.
-# The builder takes the BTS folder chosen in Settings (None = look in the usual places).
-PROFILES = {
-    "gx10": ("GX-10", lambda bts, log, bump: GX10(Tables(find_bts_root(bts)), on_event=bump, log=log),
-             "Plug it straight into the computer, not through a hub."),
-    "katana3": ("KATANA Gen 3",
-                lambda bts, log, bump: Katana(KatanaTables(find_katana_root(bts)), on_event=bump, log=log),
-                "Plug it in over USB; it needs Roland's KATANA3 Driver."),
-}
+# Every supported unit comes from units.UNITS. A unit's connection hint is shown only next to
+# that unit (unit menu tooltip, a tool that names it); the main messages stay generic so they
+# hold for any number of supported units.
+PROFILES = BY_KIND
 NO_UNIT = "No unit connected. Plug in a supported unit over USB and quit BOSS TONE STUDIO."
 NO_PROFILE = ("BOSS TONE STUDIO was not found for any supported unit. Install it (it does not need to run), "
               "or choose its folder in Settings.")
@@ -61,7 +53,7 @@ def load_help() -> dict:
 class State:
     def __init__(self, only: list[str] | None = None):
         self.version = 0                 # bumped on every change; the UI polls it
-        self.devices: dict = {}          # id -> GX10 | Katana (only units whose BTS is installed)
+        self.devices: dict[str, RolandUnit] = {}  # id -> unit (only units whose BTS is installed)
         self.missing: dict[str, str] = {}  # id -> why it is not available (BTS not installed ...)
         self.active: str | None = None
         self.backup: BulkBackup | None = None
@@ -80,11 +72,11 @@ class State:
         self.active = next(iter(self.devices), None)
 
     def _make(self, did: str, bts: str | None):
-        return PROFILES[did][1](bts, self.log, self.bump)
+        return PROFILES[did].create(bts, log=self.log, on_event=self.bump)
 
     # ---- compatibility: the GX-10 object, used by demo mode -------------------
     @property
-    def gx(self) -> GX10 | None:
+    def gx(self) -> RolandUnit | None:
         return self.devices.get("gx10")
 
     @property
@@ -167,14 +159,17 @@ class State:
         return self.status()
 
     def resolve(self, did: str | None) -> str:
-        """'katana', 'KATANA Gen 3', 'gx-10' ... -> device id."""
+        """'katana', 'KATANA Gen 3', 'gx-10' ... -> device id (the unit's kind, title or aliases)."""
         if did is None:
             if not self.active:
                 raise NotConnected(self.error)
             return self.active
-        key = did.lower().replace("-", "").replace(" ", "")
+        def norm(x: str) -> str:
+            return x.lower().replace("-", "").replace(" ", "")
+
+        key = norm(did)
         for i, d in self.devices.items():
-            if key in (i, d.title.lower().replace("-", "").replace(" ", "")) or i.startswith(key):
+            if key in {norm(n) for n in (i, d.title, *d.aliases)} or i.startswith(key):
                 return i
         known = ", ".join(d.title for d in self.devices.values()) or "none"
         raise ValueError(f"unknown unit '{did}' (set up: {known})")
@@ -187,7 +182,7 @@ class State:
 
     @staticmethod
     def hint(d) -> str:
-        return PROFILES.get(d.kind, ("", None, ""))[2]
+        return d.hint
 
     # ---- where each unit's BOSS TONE STUDIO is --------------------------------
     def set_bts_path(self, did: str, path: str | None) -> dict:
@@ -231,11 +226,11 @@ class State:
     def bts_status(self) -> list[dict]:
         chosen = load_config().get("bts_paths", {})
         out = []
-        for did, (title, _, _) in PROFILES.items():
+        for did, unit in PROFILES.items():
             if self.only and did not in self.only:
                 continue
             d = self.devices.get(did)
-            out.append({"id": did, "title": title, "chosen": chosen.get(did, ""),
+            out.append({"id": did, "title": unit.title, "chosen": chosen.get(did, ""),
                         "found": str(d.t.root) if d else None,
                         "version": d.t.bts_version if d else None,
                         "error": self.missing.get(did)})
@@ -256,7 +251,7 @@ class State:
                 "readonly": d.readonly, "can_backup": d.supports_backup,
                 "error": None if self._ready(d) else d.error, "hint": self.hint(d)}
                for i, d in self.devices.items()]
-        out += [{"id": i, "title": PROFILES[i][0], "connected": False, "active": False,
+        out += [{"id": i, "title": PROFILES[i].title, "connected": False, "active": False,
                  "readonly": True, "error": msg, "missing": True} for i, msg in self.missing.items()]
         return out
 

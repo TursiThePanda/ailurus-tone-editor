@@ -2,10 +2,10 @@
 every read with the BTS init values (or zeros). Skipped when BTS for KATANA Gen 3 is not installed."""
 import pytest
 
-from ailurus_tone.bts import BTSError
-from ailurus_tone.katana import EDIT_BUFFER, NUM_PATCHES, SECTIONS, Katana, decode, patch_base
-from ailurus_tone.katana_bts import KatanaTables, find_katana_root
+from ailurus_tone.locate import BTSError
 from ailurus_tone.roland import from7
+from ailurus_tone.units.katana3 import EDIT_BUFFER, NUM_PATCHES, SECTIONS, Katana, decode, patch_base
+from ailurus_tone.units.katana3_bts import KatanaTables, find_katana_root
 
 
 @pytest.fixture(scope="module")

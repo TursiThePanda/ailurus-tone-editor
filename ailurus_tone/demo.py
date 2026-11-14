@@ -9,8 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .device import GX10, VISIBLE_USER
 from .roland import NotConnected
+from .units.gx10 import GX10, VISIBLE_USER
 
 
 class DemoPort:

@@ -12,7 +12,8 @@ from pathlib import Path
 
 from py_mini_racer import MiniRacer
 
-from .locate import BTSError, BTSProduct, locate  # noqa: F401  (BTSError re-exported)
+from ..locate import BTSError, BTSProduct, locate
+from ..rolandbts import FORMAT_JS, STUB_JS, eval_tolerant, read_product
 
 GX10_BTS = BTSProduct(
     unit="GX-10", app="BOSS TONE STUDIO for GX-10", env="GX10_BTS_JS",
@@ -38,30 +39,26 @@ class Tables:
         self.root = root
         self._lock = threading.Lock()
         cfg = root / "config"
-        product = (cfg / "product_setting.js").read_text(encoding="utf-8-sig")
-        m = re.search(r"communicationLevel:\s*(\d+)", product)
-        v = re.search(r"version:\s*'([^']+)'", product)
-        if not m:
+        product = read_product(cfg / "product_setting.js")
+        if product.communication_level is None:
             raise BTSError("product_setting.js has an unexpected format (communicationLevel missing)")
-        self.communication_level = int(m.group(1))
-        self.bts_version = v.group(1) if v else "?"
+        self.communication_level = product.communication_level
+        self.bts_version = product.version
+        self.header = product.header
 
         ctx = MiniRacer()
         ctx.eval(f"var window = this; window.ProductSetting = {{communicationLevel: {self.communication_level}}};"
                  "var Parameter = {value: function(){return 0;}};")
-        # UI-only globals the table files mention (e.g. NUMPAD_TYPE.withText) are stubbed:
-        # any property read on a stub returns a plain string, so JSON export stays clean.
-        ctx.eval("function __stub(n){return new Proxy({}, {get:function(t,k){"
-                 "return k===Symbol.toPrimitive?undefined:n+'.'+String(k);}});}")
+        ctx.eval(STUB_JS)
         try:
             for f in (root / "utilities" / "constant.js", cfg / "effect_parameter.js", cfg / "resource.js"):
-                self._eval_tolerant(ctx, f.read_text(encoding="utf-8-sig"))
+                eval_tolerant(ctx, f.read_text(encoding="utf-8-sig"))
             self.effects = json.loads(ctx.eval("JSON.stringify(window.EFFECT_PARAMETERS)"))
             self.resources = json.loads(ctx.eval("JSON.stringify(Resource())"))
         except Exception as e:  # format changed in a BTS update
             ctx.close()
             raise BTSError(f"Could not read BTS {self.bts_version} tables: {e}") from e
-        ctx.eval("function __fmt(expr, value) { try { return String(eval(expr)); } catch (e) { return null; } }")
+        ctx.eval(FORMAT_JS)
         self._ctx = ctx
 
         chain_js = (root / "businesslogic" / "chain" / "chain_controller.js").read_text(encoding="utf-8-sig")
@@ -71,18 +68,6 @@ class Tables:
         # the last assignment is the one for communicationLevel >= 3
         idx = -1 if self.communication_level >= 3 else 0
         self.fx_types = [t.strip() for t in lists[idx].split(",")]
-
-    @staticmethod
-    def _eval_tolerant(ctx, code: str, tries: int = 40):
-        for _ in range(tries):
-            try:
-                return ctx.eval(code)
-            except Exception as e:
-                m = re.search(r"ReferenceError: (\w+) is not defined", str(e))
-                if not m:
-                    raise
-                ctx.eval(f"var {m.group(1)} = __stub('{m.group(1)}');")
-        raise BTSError("too many unknown names in BTS tables")
 
     def close(self):
         self._ctx.close()

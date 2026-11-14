@@ -4,10 +4,10 @@ They need the installed BOSS TONE STUDIO for the tables (skipped otherwise).
 """
 import pytest
 
-from ailurus_tone.bts import BTSError, Tables, find_bts_root
-from ailurus_tone.device import BLOCK_INDEX, BLOCKS, GX10, encode_value, read_value, slot_label, user_base
-from ailurus_tone.mcp_tools import parse_slot
+from ailurus_tone.locate import BTSError
 from ailurus_tone.roland import add7, checksum, from7, to7
+from ailurus_tone.units.gx10 import BLOCK_INDEX, BLOCKS, GX10, encode_value, read_value, slot_label, user_base
+from ailurus_tone.units.gx10_bts import Tables, find_bts_root
 
 
 @pytest.fixture(scope="module")
@@ -68,9 +68,9 @@ def test_slot_labels():
     assert slot_label(0) == "U01-1"
     assert slot_label(195) == "U66-1"
     assert slot_label(197) == "U66-3"
-    assert parse_slot("U66-1") == 195
+    assert GX10.parse_slot("U66-1") == 195
     with pytest.raises(ValueError):
-        parse_slot("U67-1")
+        GX10.parse_slot("U67-1")
 
 
 def test_encode_roundtrip(tables):

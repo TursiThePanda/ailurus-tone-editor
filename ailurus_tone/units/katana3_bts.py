@@ -19,7 +19,9 @@ from pathlib import Path
 
 from py_mini_racer import MiniRacer
 
-from .locate import BTSError, BTSProduct, locate
+from ..locate import BTSError, BTSProduct, locate
+from ..rolandbts import FORMAT_JS, parse_address_map, read_product
+from ..rolandbts import encode as encode_raw
 
 KATANA3_BTS = BTSProduct(
     unit="KATANA Gen3", app="BOSS TONE STUDIO for KATANA Gen 3", env="KATANA3_BTS_HTML",
@@ -27,24 +29,10 @@ KATANA3_BTS = BTSProduct(
     required=("js/config/address_map.js", "js/config/resource.js", "export/item.json", "export/layout.div"),
     mac=("/Applications/BOSS/KATANA Gen 3/BOSS TONE STUDIO for KATANA Gen 3.app/Contents/Resources/html",))
 
-# size tokens in address_map.js -> (kind, byte count); kinds as in bts.layout()
-SIZES = {"INTEGER1x7": ("byte", 1), "INTEGER2x4": ("nibbles", 2), "INTEGER2x7": ("byte7", 2),
-         "INTEGER4x4": ("nibbles", 4)}
-
-ENTRY = re.compile(r"\{\s*addr:\s*0x([0-9A-Fa-f]{8}),\s*size:\s*([A-Za-z0-9x]+),\s*ofs:\s*(-?\d+),\s*"
-                   r"init:\s*('[^']*'|-?\d+),\s*min:\s*(-?\d+),\s*max:\s*(-?\d+),\s*name:\s*'([^']+)'")
-CHILD = re.compile(r"\{\s*addr:\s*0x([0-9A-Fa-f]{8}),\s*size:\s*0,\s*child:\s*(\w+),\s*name:\s*'([^']+)'")
-TABLE = re.compile(r"var\s+(\w+)\s*=\s*\[(.*?)\n\s*\];", re.S)
-
 
 def find_katana_root(chosen: str | None = None) -> Path:
     """The html folder of BOSS TONE STUDIO for KATANA Gen 3 (see locate.py for where we look)."""
     return locate(KATANA3_BTS, chosen)
-
-
-def addr_bytes(hex8: str) -> list[int]:
-    """address_map writes 4 raw 7-bit bytes as one literal: '20100000' -> [0x20, 0x10, 0, 0]."""
-    return list(bytes.fromhex(hex8))
 
 
 class _Layout(HTMLParser):
@@ -109,12 +97,9 @@ class KatanaTables:
         self._lock = threading.Lock()
         cfg = root / "js" / "config"
         try:
-            product = (cfg / "product_setting.js").read_text(encoding="utf-8-sig")
-            mid = re.search(r"modelId:\s*'([0-9A-Fa-f]+)'", product).group(1)
-            dev = re.search(r"deviceId:\s*'([0-9A-Fa-f]+)'", product).group(1)
-            v = re.search(r"version:\s*'([^']+)'", product)
-            self.bts_version = v.group(1) if v else "?"
-            self.header = [0xF0, 0x41, int(dev, 16)] + list(bytes.fromhex(mid))
+            product = read_product(cfg / "product_setting.js")
+            self.bts_version = product.version
+            self.header = product.header
             self._read_address_map((cfg / "address_map.js").read_text(encoding="utf-8-sig"))
             self._read_resources((cfg / "resource.js").read_text(encoding="utf-8-sig"))
             self._read_widgets(root / "export")
@@ -123,42 +108,16 @@ class KatanaTables:
         except Exception as e:  # format changed in a BTS update
             raise BTSError(f"Could not read KATANA BTS {getattr(self, 'bts_version', '?')} tables: {e}") from e
         self._ctx = MiniRacer()
-        self._ctx.eval("function __fmt(expr, value) { try { return String(eval(expr)); } catch (e) { return null; } }")
+        self._ctx.eval(FORMAT_JS)
 
     # ---- address map -------------------------------------------------------------
     def _read_address_map(self, js: str):
-        self.tables: dict[str, list[dict]] = {}
-        children: dict[str, list[tuple[list[int], str, str]]] = {}
-        for name, body in TABLE.findall(js):
-            entries = ENTRY.findall(body)
-            if entries:
-                rows = []
-                for a, size, ofs, _init, lo, hi, prm in entries:
-                    off = addr_bytes(a)
-                    lin = (off[2] << 7) | off[3]
-                    if size.isdigit():
-                        kind, n = "text", int(size)
-                    elif size in SIZES:
-                        kind, n = SIZES[size]
-                    else:
-                        raise BTSError(f"unknown size {size} in {name}")
-                    rows.append({"offset": lin, "kind": kind, "n": n, "ofs": int(ofs),
-                                 "min": int(lo), "max": int(hi), "id": prm})
-                self.tables[name] = rows
-            kids = CHILD.findall(body)
-            if kids:
-                children[name] = [(addr_bytes(a), child, bname) for a, child, bname in kids]
-        patch = children.get("PATCH")
-        if not patch:
+        amap = parse_address_map(js)
+        self.tables = amap.tables
+        if "PATCH" not in amap.children:
             raise BTSError("PATCH layout not found in address_map.js")
         # block name ('DELAY(4)') -> (offset bytes inside a patch, table name, size in bytes)
-        self.blocks: dict[str, tuple[list[int], str, int]] = {}
-        for off, child, bname in patch:
-            rows = self.tables.get(child, [])
-            size = max((r["offset"] + r["n"] for r in rows), default=0)
-            self.blocks[bname] = (off, child, size)
-        top = {bname: off for off, _, bname in children.get("", [])}
-        self.top = top
+        self.blocks = amap.blocks("PATCH")
         # FX_DETAIL holds every FX type's params one after another, grouped by name prefix in type order
         self.fx_groups = self._groups("PATCH_FX_DETAIL", "PRMID_PATCH_FX_DETAIL_")
         self.pedal_groups = self._groups("PATCH_PEDALFX", "PRMID_PATCH_PEDALFX_")
@@ -299,12 +258,5 @@ class KatanaTables:
 
 
 def encode(p: dict, value: int) -> list[int]:
-    """Value as shown -> the bytes the amp stores (inverse of katana.decode)."""
-    raw = value + p["ofs"]
-    if p["kind"] == "nibbles":
-        return [(raw >> (4 * (p["n"] - 1 - i))) & 15 for i in range(p["n"])]
-    if p["kind"] == "byte7":
-        return [(raw >> 7) & 0x7F, raw & 0x7F]
-    if p["kind"] == "text":
-        raise ValueError("text parameters are not edited here")
-    return [raw & 0x7F]
+    """Value as shown -> the bytes the amp stores (inverse of katana3.decode)."""
+    return encode_raw(value, p["kind"], p["n"], p["ofs"])

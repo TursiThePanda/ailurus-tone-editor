@@ -2,20 +2,21 @@
 
 Draft 1 rule, enforced here and not left to the model: tools change the CURRENT SOUND only.
 Nothing writes a user patch slot, on any unit.
-Every tool works on the ACTIVE unit unless `device` names another one ('gx10', 'katana').
+Every tool works on the ACTIVE unit unless `device` names another one (a unit's kind, e.g. 'gx10').
 """
 from __future__ import annotations
 
 from mcp.server.mcpserver import MCPServer
 
-from .device import GX10
 from .roland import NotConnected
 from .state import State
+from .units import UNITS
 
 INSTRUCTIONS = (
-    "Controls BOSS guitar units live: a GX-10 processor and a KATANA Gen 3 amp. "
+    f"Controls BOSS guitar units live ({', '.join(u.title for u in UNITS)}). "
     "Several may be connected; gx_status lists them under 'devices' and says "
-    "which is active. Tools act on the active unit; pass device='katana' or device='gx10' to pick "
+    "which is active. Tools act on the active unit; pass device=<its id> "
+    f"({', '.join(repr(u.kind) for u in UNITS)}) to pick "
     "another, or gx_select_device to change the active one (also what the app window shows). "
     "Changes go to the CURRENT SOUND only "
     "(heard instantly, not stored in any patch slot; switching patch discards them). "
@@ -25,11 +26,6 @@ INSTRUCTIONS = (
     "The player also edits by hand (in the app window or on the unit's knobs) and may undo your "
     "changes: call gx_history before suggesting the next step to see what they did since."
 )
-
-
-def parse_slot(slot: str) -> int:
-    """GX-10 panel label 'U66-1' -> 0-based user slot 195."""
-    return GX10.parse_slot(slot)
 
 
 def _safe(fn) -> dict:
@@ -55,7 +51,8 @@ def register(mcp: MCPServer, s: State):
 
     @mcp.tool()
     def gx_select_device(device: str) -> dict:
-        """Make another connected unit the active one ('gx10' or 'katana'); the app window follows."""
+        """Make another connected unit the active one (its id from gx_status 'devices', e.g. 'gx10');
+        the app window follows."""
         return _safe(lambda: s.select_device(device))
 
     @mcp.tool()
