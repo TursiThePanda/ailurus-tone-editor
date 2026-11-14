@@ -178,7 +178,8 @@ class State:
 
     def devices_status(self) -> list[dict]:
         out = [{"id": i, "title": d.title, "connected": self._ready(d), "active": i == self.active,
-                "readonly": d.readonly, "error": None if self._ready(d) else d.error}
+                "readonly": d.readonly, "can_backup": d.supports_backup,
+                "error": None if self._ready(d) else d.error}
                for i, d in self.devices.items()]
         out += [{"id": i, "title": PROFILES[i][0], "connected": False, "active": False,
                  "readonly": True, "error": msg, "missing": True} for i, msg in self.missing.items()]
@@ -190,6 +191,7 @@ class State:
         any_bts = next(iter(self.devices.values()), None)
         s = {"version": self.version, "connected": connected, "error": None if connected else self.error,
              "device": self.active, "device_title": d.title if d else None,
+             "can_backup": bool(d and d.supports_backup),
              "devices": self.devices_status(),
              "bts_version": d.t.bts_version if d else (any_bts.t.bts_version if any_bts else None),
              "backup": self.backup.status() if self.backup else None,

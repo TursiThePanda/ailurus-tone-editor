@@ -44,7 +44,7 @@ function renderTop() {
   $("readonly").classList.toggle("hidden", !(c && state.patch.readonly));
   $("undoBtn").disabled = !(c && state.patch.can_undo);
   $("redoBtn").disabled = !(c && state.patch.can_redo);
-  for (const id of ["backupBtn", "exportBtn"]) $(id).disabled = !c || !!state.backup?.running || state.device !== "gx10";
+  for (const id of ["backupBtn", "exportBtn"]) $(id).disabled = !c || !!state.backup?.running || !state.can_backup;
   renderDevices();
   if (state?.error && !c) { $("message").textContent = state.error; $("message").classList.remove("hidden"); }
   else if (c && $("message").textContent === state?.error) $("message").classList.add("hidden");
@@ -78,7 +78,7 @@ function renderChain() {
   const movable = !!state?.patch?.straight;
   $("chain").classList.toggle("movable", movable);
   $("chain").innerHTML = chain.map((b, i) =>
-    (i ? '<span class="arrow">›</span>' : "") +
+    (i ? (b.in_chain === false ? '<span class="arrow sep" data-help="Not part of the signal order shown">|</span>' : '<span class="arrow">›</span>') : "") +
     `<div class="blk c-${esc(b.color)} ${b.on ? "" : "off"} ${b.fx === selFx ? "sel" : ""}" data-fx="${b.fx}" tabindex="0"
        draggable="${movable}" data-help="${esc(helpFor("types", b.type))}${movable ? " Drag to move it in the chain." : ""}">
        <div class="t">${esc(b.type)}</div><div class="n">${b.sub != null ? esc(b.sub) || "&nbsp;" : "fx " + b.fx}</div></div>`).join("");

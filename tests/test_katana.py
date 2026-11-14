@@ -77,11 +77,10 @@ def test_tables_from_bts(tables):
 def test_every_section_decodes(tables):
     k = make(tables)
     s = k.summary()
-    assert [b["type"] for b in s["chain"]] == [x[0] for x in SECTIONS]
-    assert s["readonly"] and not s["straight"]
+    assert sorted(b["type"] for b in s["chain"]) == sorted(x[0] for x in SECTIONS)
+    assert not s["readonly"] and not s["straight"]
     for b in s["chain"]:
         d = k.describe_fx(b["fx"])
-        assert d["readonly"]
         names = [p["name"] for p in d["params"]]
         assert len(names) == len(set(names)), f"duplicate names in {d['type']}"
         for p in d["params"]:
@@ -109,14 +108,77 @@ def test_fx_type_filters_params(tables):
     assert "SUSTAIN" in names and "SENS" not in names
 
 
-def test_read_only(tables):
+def test_edits_go_to_the_edit_buffer(tables):
+    """A change writes PATCH (20 00 ..) only, never a memory (20 10 .. and up) and never PATCH_WRITE."""
     k = make(tables)
-    for call in (lambda: k.set_param(2, "DRIVE", 10), lambda: k.set_switch(2, True),
-                 lambda: k.select_patch(1), lambda: k.set_chain([1, 2])):
-        with pytest.raises(ValueError):
-            call()
-    assert k.port.sent == []               # nothing was ever written to the amp
-    assert k.undo() is None
+    r = k.set_param(6, "FEEDBACK", 40)             # DELAY (GREEN) = DELAY(1) at 20 00 28 00, FEEDBACK at +5
+    assert r["new"] == 40
+    assert k.port.sent == [([0x20, 0, 0x28, 5], [40])]
+    k.set_param(6, "TIME", 400)                    # INTEGER4x4 at +1: four nibbles
+    assert k.port.sent[-1] == ([0x20, 0, 0x28, 1], [0, 1, 9, 0])
+    k.set_switch(6, True)
+    assert k.port.sent[-1] == ([0x20, 0, 0x08, 3], [1])
+    for a, _ in k.port.sent:
+        assert a[0] == 0x20 and a[1] == 0, a
+    k.set_param(4, "AMP TYPE", "LEAD")
+    assert k.describe_fx(4)["sub"] == "LEAD" and k._value(k.temp, "AMP", 7) == 4
+
+
+def test_undo_redo_and_history(tables):
+    k = make(tables)
+    k.set_param(2, "DRIVE", 77)
+    k.set_param(2, "VARIATION", "RED")             # now BOOSTER(2) is shown; undo must still hit BOOSTER(1)
+    assert k.summary()["can_undo"]
+    k.undo()
+    k.undo()
+    assert k._value(k.temp, "BOOSTER(1)", 1) == 0 and k._value(k.temp, "COLOR", 0) == 0
+    k.redo()
+    assert k._value(k.temp, "BOOSTER(1)", 1) == 77
+
+
+def test_bad_values_are_refused(tables):
+    k = make(tables)
+    with pytest.raises(ValueError):
+        k.set_param(6, "FEEDBACK", 101)
+    with pytest.raises(ValueError):
+        k.set_param(2, "VARIATION", "BLUE")
+    with pytest.raises(KeyError):
+        k.set_param(2, "NOPE", 1)
+    with pytest.raises(ValueError):
+        k.set_chain([1, 2])
+    assert k.port.sent == []
+
+
+def test_select_patch(tables):
+    k = make(tables)
+    k.select_patch(1)
+    assert k.port.sent[0] == ([0x7F, 0, 1, 0], [0, 1])
+    with pytest.raises(ValueError):
+        k.select_patch(9)                          # PATCH(10) = PREVIEW is not selectable
+
+
+def test_chain_follows_chain_parameter(tables):
+    other = from7([0x20, 0, 0x02, 0])
+    k = make(tables, {other: [2, 0, 0]})          # CHAIN 2: pdl bst mod fx amp ...
+    order = [SECTIONS[i][0] for i in k.order()]
+    assert order.index("FX") < order.index("AMP") < order.index("DELAY")
+    amp = {p["name"]: p for p in k.describe_fx(4)["params"]}
+    assert amp["CHAIN"]["display"].startswith("PEDAL > BST > MOD > FX > AMP")
+
+
+def test_own_patch_select_echo_is_not_logged(tables):
+    k = make(tables)
+    k.select_patch(0)
+    before = k.log.seq
+    k._unsolicited([0, 0, 0, 0], [0, 0])           # the amp confirms the patch we selected
+    assert k.log.seq == before
+
+
+def test_unit_knob_is_taken_over(tables):
+    k = make(tables)
+    k._unsolicited([0x20, 0, 0x06, 0], [88])        # GAIN turned on the amp
+    assert k._value(k.temp, "AMP", 0) == 88
+    assert k.port.sent == []
 
 
 def test_decode_sizes(tables):

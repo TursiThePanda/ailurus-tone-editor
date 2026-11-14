@@ -1,4 +1,7 @@
-"""Bulk backup of all visible user patches, and the app config (default backup folder)."""
+"""Bulk backup of all stored patches of a unit, and the app config (default backup folder).
+
+The unit says what to read: backup_slots() -> [(n, label)], read_slot(n) -> blocks,
+backup_layout(), backup_prefix and slot_name(blocks)."""
 from __future__ import annotations
 
 import json
@@ -8,8 +11,6 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-
-from .device import BLOCKS, VISIBLE_USER, slot_label, user_base
 
 FORMAT = "ailurus-tone-backup/1"
 
@@ -47,7 +48,8 @@ class BulkBackup:
         self.gx = gx
         self.folder = Path(folder or load_config()["backup_dir"]).expanduser()
         self.done = 0
-        self.total = VISIBLE_USER
+        self.slots = gx.backup_slots()
+        self.total = len(self.slots)
         self.error: str | None = None
         self.path: str | None = None
         self.running = False
@@ -66,18 +68,16 @@ class BulkBackup:
     def _run(self):
         try:
             patches = []
-            for n in range(VISIBLE_USER):        # hidden slots 199/200 are never read
+            for k, (n, label) in enumerate(self.slots):
                 with self.gx.lock:
-                    blocks = self.gx.read_patch(user_base(n))
-                patches.append({"slot": n, "label": slot_label(n),
-                                "name": bytes(blocks[0][:16]).decode("ascii", "replace").rstrip(),
-                                "blocks": blocks})
-                self.done = n + 1
+                    blocks = self.gx.read_slot(n)
+                patches.append({"slot": n, "label": label, "name": self.gx.slot_name(blocks), "blocks": blocks})
+                self.done = k + 1
             stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-            out = self.folder / f"GX-10_all-patches_{stamp}.json"
+            out = self.folder / f"{self.gx.backup_prefix}_all-patches_{stamp}.json"
             out.write_text(json.dumps({
-                "format": FORMAT, "created": datetime.now().isoformat(timespec="seconds"),
-                "bts_version": self.gx.t.bts_version, "block_layout": [[b[0], b[1], b[2]] for b in BLOCKS],
+                "format": FORMAT, "device": self.gx.title, "created": datetime.now().isoformat(timespec="seconds"),
+                "bts_version": self.gx.t.bts_version, "block_layout": self.gx.backup_layout(),
                 "patches": patches,
             }))
             self.path = str(out)

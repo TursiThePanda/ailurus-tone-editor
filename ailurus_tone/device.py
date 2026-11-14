@@ -88,6 +88,7 @@ class GX10:
     port_name = PORT_NAME
     readonly = False
     supports_backup = True
+    backup_prefix = "GX-10"
 
     def __init__(self, tables: Tables, on_event=None, log: ActivityLog | None = None):
         self.t = tables
@@ -105,6 +106,21 @@ class GX10:
 
     def poll(self):
         """The GX-10 reports panel changes by itself (editor mode): nothing to poll."""
+
+    # ---- backup (see backup.BulkBackup) --------------------------------------
+    def backup_slots(self) -> list[tuple[int, str]]:
+        return [(n, slot_label(n)) for n in range(VISIBLE_USER)]   # hidden slots 199/200 are never read
+
+    def read_slot(self, n: int) -> list[list[int]]:
+        return self.read_patch(user_base(n))
+
+    @staticmethod
+    def slot_name(blocks) -> str:
+        return bytes(blocks[0][:16]).decode("ascii", "replace").rstrip()
+
+    @staticmethod
+    def backup_layout() -> list:
+        return [[b[0], b[1], b[2]] for b in BLOCKS]
 
     def patch_list(self) -> list[dict]:
         return [{"slot": i, "label": slot_label(i), "name": n} for i, n in enumerate(self.names)]

@@ -201,48 +201,59 @@ class KatanaTables:
         lay.feed((export / "layout.div").read_text(encoding="utf-8-sig"))
         el = lay.el
         self.ui: dict[tuple[str, int], dict] = {}   # (block base name, linear offset) -> widget info
-        for wid, it in items.items():
-            pid = it.get("pid") if isinstance(it, dict) else None
-            if not pid or not pid.startswith("PATCH%") or pid.count("%") != 2:
-                continue
-            if wid.startswith(("asgn-", "panel-")) or wid.endswith(("-spinner", "-watcher")):
-                continue
-            _, block, off = pid.split("%")
-            key = (re.sub(r"\(\d+\)$", "", block), int(off))
-            if key in self.ui:
-                continue
-            e = el.get(wid, {"attrs": {}, "p": [], "a": []})
-            label_id = e["attrs"].get("description") or re.sub(r"-(dial|knob|slider|select-box|btn)$", "-label", wid)
-            label = (el.get(label_id, {}).get("p") or [""])[0]
-            info = {"label": label, "widget": wid}
-            if wid.endswith("select-box"):
-                texts = el.get(wid + "-box", {}).get("a", [])
-                values = it.get("list_order") or list(range(len(texts)))
-                if texts and len(values) == len(texts):
-                    info["options_by_value"] = dict(zip(values, texts, strict=True))
-            st = el.get(it.get("stringer", ""), None)
-            if st:
-                fmt = st["attrs"].get("format") or ""
-                if fmt:
-                    info["format"] = fmt.replace("<br>", " ")
-                elif st["p"]:
-                    info["texts"] = st["p"]
-            coef = e["attrs"].get("value-coef")
-            if coef:
-                info["coef"] = float(coef)
-            self.ui[key] = info
-        # widgets bound to a 'panel-' knob only (amp section) are still wanted
-        for wid, it in items.items():
-            pid = it.get("pid") if isinstance(it, dict) else None
-            if (not pid or not wid.startswith("panel-") or not pid.startswith("PATCH%")
-                    or wid.endswith(("-spinner", "-watcher"))):
-                continue
-            _, block, off = pid.split("%")
-            key = (re.sub(r"\(\d+\)$", "", block), int(off))
-            if key not in self.ui:
-                e = el.get(wid, {"attrs": {}})
-                label_id = e["attrs"].get("description", "")
-                self.ui[key] = {"label": (el.get(label_id, {}).get("p") or [""])[0], "widget": wid}
+        # editor widgets first; 'panel-' knobs only for what the editor pages do not show (amp section)
+        for panel in (False, True):
+            for wid, it in items.items():
+                pid = it.get("pid") if isinstance(it, dict) else None
+                if not pid or not pid.startswith("PATCH%") or pid.count("%") != 2:
+                    continue
+                if (wid.startswith("asgn-") or wid.endswith(("-spinner", "-watcher"))
+                        or wid.startswith("panel-") != panel):
+                    continue
+                _, block, off = pid.split("%")
+                key = (re.sub(r"\(\d+\)$", "", block), int(off))
+                if key not in self.ui:
+                    self.ui[key] = self._widget(wid, it, el)
+        # AMP TYPE: the panel knob has no text list; BTS lights one of six labels instead
+        js = (export.parent / "js" / "businesslogic" / "bts" / "effect_controller.js").read_text(encoding="utf-8-sig")
+        amp_labels = re.findall(r"label:\s*'(amp-type-\w+-label)'", js)
+        amp_names = [(el.get(i, {}).get("p") or [""])[0] for i in amp_labels]
+        amp_type = next(r for r in self.tables["PATCH_AMP"] if r["id"] == "PRMID_PATCH_AMP_TYPE")
+        if len(amp_names) == amp_type["max"] + 1 and all(amp_names):
+            self.ui.setdefault(("AMP", amp_type["offset"]), {})["options_by_value"] = dict(enumerate(amp_names))
+        # signal order: CHAIN (0-8) x pedal FX position x send/return position, then the two EQ positions
+        cfg = (export.parent / "js" / "businesslogic" / "chain" / "chain_config.js").read_text(encoding="utf-8-sig")
+        ctx = MiniRacer()
+        try:
+            ctx.eval("var window = this;")
+            ctx.eval(cfg)
+            self.chain_base = json.loads(ctx.eval("JSON.stringify(CHAIN_BASE_FLOW)"))
+            self.chain_eq = json.loads(ctx.eval("JSON.stringify(CHAIN_EQ_FLOW)"))
+        finally:
+            ctx.close()
+
+    @staticmethod
+    def _widget(wid: str, it: dict, el: dict) -> dict:
+        e = el.get(wid, {"attrs": {}, "p": [], "a": []})
+        label_id = e["attrs"].get("description") or re.sub(r"-(dial|knob|slider|select-box|btn)$", "-label", wid)
+        label = (el.get(label_id, {}).get("p") or [""])[0]
+        info = {"label": label, "widget": wid}
+        if wid.endswith("select-box"):
+            texts = el.get(wid + "-box", {}).get("a", [])
+            values = it.get("list_order") or list(range(len(texts)))
+            if texts and len(values) == len(texts):
+                info["options_by_value"] = dict(zip(values, texts, strict=True))
+        st = el.get(it.get("stringer", ""), None)
+        if st:
+            fmt = st["attrs"].get("format") or ""
+            if fmt:
+                info["format"] = fmt.replace("<br>", " ")
+            elif st["p"]:
+                info["texts"] = st["p"]
+        coef = e["attrs"].get("value-coef")
+        if coef:
+            info["coef"] = float(coef)
+        return info
 
     # ---- public helpers ----------------------------------------------------------------
     def params(self, block: str, prefix: str | None = None) -> list[dict]:
@@ -270,7 +281,7 @@ class KatanaTables:
         texts = ui.get("texts") or []
         if len(texts) in (n, n + 1):   # the stringer's last <p> is the visible "current value" copy
             return texts[:n]
-        if n == 2 and p["id"].endswith("_SW"):
+        if n == 2 and p["id"].endswith(("_SW", "_VARIATION")):
             return ["OFF", "ON"]
         return None
 
@@ -293,3 +304,15 @@ class KatanaTables:
 
     def close(self):
         self._ctx.close()
+
+
+def encode(p: dict, value: int) -> list[int]:
+    """Value as shown -> the bytes the amp stores (inverse of katana.decode)."""
+    raw = value + p["ofs"]
+    if p["kind"] == "nibbles":
+        return [(raw >> (4 * (p["n"] - 1 - i))) & 15 for i in range(p["n"])]
+    if p["kind"] == "byte7":
+        return [(raw >> 7) & 0x7F, raw & 0x7F]
+    if p["kind"] == "text":
+        raise ValueError("text parameters are not edited here")
+    return [raw & 0x7F]

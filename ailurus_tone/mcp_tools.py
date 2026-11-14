@@ -1,7 +1,7 @@
 """MCP tools: what any AI client (Claude, Codex, Gemini, LM Studio, ...) may do with the units.
 
 Draft 1 rule, enforced here and not left to the model: tools change the CURRENT SOUND only.
-Nothing writes a user patch slot. The KATANA is read-only in this version.
+Nothing writes a user patch slot, on any unit.
 Every tool works on the ACTIVE unit unless `device` names another one ('gx10', 'katana').
 """
 from __future__ import annotations
@@ -13,8 +13,8 @@ from .roland import NotConnected
 from .state import State
 
 INSTRUCTIONS = (
-    "Controls BOSS guitar units live: a GX-10 processor (read and edit) and a KATANA Gen 3 amp "
-    "(read only for now). Several may be connected; gx_status lists them under 'devices' and says "
+    "Controls BOSS guitar units live: a GX-10 processor and a KATANA Gen 3 amp. "
+    "Several may be connected; gx_status lists them under 'devices' and says "
     "which is active. Tools act on the active unit; pass device='katana' or device='gx10' to pick "
     "another, or gx_select_device to change the active one (also what the app window shows). "
     "Changes go to the CURRENT SOUND only "
@@ -102,7 +102,8 @@ def register(mcp: MCPServer, s: State):
     def gx_set_chain(order: list[int], device: str | None = None) -> dict:
         """Reorder the effects of the current sound. `order` lists the fx numbers in the new signal
         order and must contain exactly the fx now on the chain (see gx_status). Only for straight
-        chains (no divider/splitter); undo with gx_undo. Not saved to the patch."""
+        chains (no divider/splitter); undo with gx_undo. Not saved to the patch. GX-10 only: the KATANA
+        has nine fixed orders, chosen with the CHAIN parameter of its AMP block (gx_set)."""
         return _safe(lambda: s.need(device).set_chain(order, who="ai"))
 
     @mcp.tool()
@@ -118,7 +119,7 @@ def register(mcp: MCPServer, s: State):
     @mcp.tool()
     def gx_select_patch(slot: str, device: str | None = None) -> dict:
         """Switch the unit to a stored patch, e.g. 'U66-1' on the GX-10. Unsaved changes to the current
-        sound are lost. Not available on the KATANA yet."""
+        sound are lost. KATANA slots: PANEL, A:CH1 .. A:CH4, B:CH1 .. B:CH4."""
         def f():
             d = s.need(device)
             d.select_patch(d.parse_slot(slot), who="ai")
@@ -127,6 +128,6 @@ def register(mcp: MCPServer, s: State):
 
     @mcp.tool()
     def gx_backup_all() -> dict:
-        """Back up all 198 GX-10 user patches (active unit must be the GX-10) into the default backup
+        """Back up every stored patch of the active unit (GX-10: 198, KATANA: 9) into the default backup
         folder. Returns at once; gx_status shows progress and the file path."""
         return _safe(s.start_backup)
