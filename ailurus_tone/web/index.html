@@ -50,13 +50,22 @@
 <dialog id="settings">
   <form method="dialog">
     <h3>Settings</h3>
-    <label class="small muted">Default backup folder</label>
-    <div class="row"><input id="backupDir" type="text"><button type="button" id="pickDir">Choose…</button></div>
-    <div id="settingsErr" class="small err"></div>
-    <h4>BOSS TONE STUDIO</h4>
-    <p class="small muted">The app reads each unit's parameter tables from its installed BOSS TONE STUDIO.
-      It is found by itself in the usual place; if you installed it elsewhere, choose the folder it is in.</p>
-    <div id="btsRows"></div>
+    <div class="tabs" role="tablist">
+      <button type="button" class="tab sel" data-tab="general" role="tab">General</button>
+      <button type="button" class="tab" data-tab="bts" role="tab">BOSS TONE STUDIO</button>
+      <button type="button" class="tab" data-tab="about" role="tab">About</button>
+    </div>
+    <section class="pane" data-pane="general">
+      <label class="small muted">Default backup folder</label>
+      <div class="row"><input id="backupDir" type="text"><button type="button" id="pickDir">Choose…</button></div>
+      <div id="settingsErr" class="small err"></div>
+    </section>
+    <section class="pane hidden" data-pane="bts">
+      <p class="small muted">The app reads each unit's parameter tables from its installed BOSS TONE STUDIO.
+        It is found by itself in the usual place; if you installed it elsewhere, choose the folder it is in.</p>
+      <div id="btsRows"></div>
+    </section>
+    <section class="pane hidden" data-pane="about"><div id="aboutBox" class="small">Loading…</div></section>
     <div class="row end"><button value="cancel">Close</button><button type="button" id="saveSettings">Save</button></div>
   </form>
 </dialog>

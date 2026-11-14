@@ -267,8 +267,31 @@ $("exportBtn").onclick = async () => {
 };
 $("settingsBtn").onclick = () => {
   $("backupDir").value = state?.backup_dir || ""; $("settingsErr").textContent = "";
-  renderBts(state?.bts || []); $("settings").showModal();
+  renderBts(state?.bts || []); showTab("general"); $("settings").showModal();
 };
+function showTab(name) {
+  document.querySelectorAll("#settings .tab").forEach((t) => t.classList.toggle("sel", t.dataset.tab === name));
+  document.querySelectorAll("#settings .pane").forEach((p) => p.classList.toggle("hidden", p.dataset.pane !== name));
+  $("saveSettings").classList.toggle("hidden", name !== "general");
+  if (name === "about") loadAbout();
+}
+document.querySelectorAll("#settings .tab").forEach((t) => (t.onclick = () => showTab(t.dataset.tab)));
+async function loadAbout() {
+  try {
+    const a = await api("/api/about");
+    const link = (u, t) => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>`;
+    $("aboutBox").innerHTML = `<p><b>Ailurus Tone Editor ${esc(a.version)}</b> <span class="muted">(build ${esc(a.build)}, ${esc(a.platform)})</span></p>
+      <p>Live editor and MCP server for BOSS units: GX-10 and KATANA Gen 3. Edit your tone by hand, or let an AI do it.</p>
+      <p>${a.links.map((l) => link(l.url, l.title)).join(" · ")}</p>
+      ${a.can_update ? `<p><button type="button" id="checkUpdates">Check for updates</button> <span class="muted">Checked once a day by itself.</span></p>` : ""}
+      <p>MCP endpoint while the app runs: <code>${esc(a.mcp_url)}</code><br>
+        <span class="muted">Claude Code:</span> <code>claude mcp add --transport http ailurus-tone ${esc(a.mcp_url)}</code></p>
+      <p>Licensed under ${link(a.licence.url, a.licence.title)}.<br><span class="muted">${esc(a.notice)}</span></p>
+      <p class="muted">Built with ${a.libraries.map((l) => `${link(l.url, l.name)} (${esc(l.licence)})`).join(" · ")}</p>`;
+    const b = $("checkUpdates");
+    if (b) b.onclick = async () => { try { await api("/api/update/check", {}); } catch (e) { flash(e.message); } };
+  } catch (e) { $("aboutBox").textContent = e.message; }
+}
 
 // one row per supported unit: where its BOSS TONE STUDIO is (chosen folder or found by itself)
 function renderBts(list, errors = {}) {

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import queue
+import re
 import threading
 import time
 
@@ -35,6 +36,9 @@ def hex_addr(addr) -> str:
     return bytes(addr).hex(" ").upper()
 
 
+# a MIDI port name with what Windows adds around it: optional "2- " in front, " 1" behind
+PORT_DECOR = re.compile(r"(?:\d+- )?(.+?)(?: \d+)?")
+
 class NotConnected(RuntimeError):
     pass
 
@@ -59,9 +63,20 @@ class RolandPort:
 
     # ---- connection ----------------------------------------------------------
     @staticmethod
-    def available(port_name: str) -> bool:
+    def find_port(ports: list[str], name: str) -> int | None:
+        """Index of the unit's port. macOS names it exactly ('GX-10'); on Windows rtmidi appends
+        the port number ('GX-10 1') and Windows may prefix a second device of the same name
+        ('2- GX-10 3')."""
+        for i, p in enumerate(ports):
+            if PORT_DECOR.fullmatch(p) and PORT_DECOR.fullmatch(p).group(1) == name:
+                return i
+        return None
+
+    @classmethod
+    def available(cls, port_name: str) -> bool:
         try:
-            return port_name in rtmidi.MidiIn().get_ports() and port_name in rtmidi.MidiOut().get_ports()
+            return (cls.find_port(rtmidi.MidiIn().get_ports(), port_name) is not None
+                    and cls.find_port(rtmidi.MidiOut().get_ports(), port_name) is not None)
         except Exception:
             return False
 
@@ -75,11 +90,12 @@ class RolandPort:
                 return
             mi, mo = rtmidi.MidiIn(), rtmidi.MidiOut()
             ins, outs = mi.get_ports(), mo.get_ports()
-            if self.port_name not in ins or self.port_name not in outs:
+            i, o = self.find_port(ins, self.port_name), self.find_port(outs, self.port_name)
+            if i is None or o is None:
                 raise NotConnected(f"MIDI port '{self.port_name}' not found (ports: {ins})")
-            mi.open_port(ins.index(self.port_name))
+            mi.open_port(i)
             mi.ignore_types(sysex=False, timing=True, active_sense=True)
-            mo.open_port(outs.index(self.port_name))
+            mo.open_port(o)
             mi.set_callback(self._on_midi)
             self.mi, self.mo = mi, mo
             time.sleep(0.1)

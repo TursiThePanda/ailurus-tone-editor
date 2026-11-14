@@ -18,7 +18,8 @@ from ..rolandbts import FORMAT_JS, STUB_JS, eval_tolerant, read_product
 GX10_BTS = BTSProduct(
     unit="GX-10", app="BOSS TONE STUDIO for GX-10", env="GX10_BTS_JS",
     setting="config/product_setting.js", required=("config/effect_parameter.js",),
-    mac=("/Applications/BOSS/GX-10/BOSS TONE STUDIO for GX-10.app/Contents/Resources/html/js",))
+    mac=("/Applications/BOSS/GX-10/BOSS TONE STUDIO for GX-10.app/Contents/Resources/html/js",),
+    html_sub="js")
 
 SIZE_CONSTANTS = {  # from utilities/constant.js; byte layout of each size code
     0x10000: ("byte", 1), 0x10001: ("byte", 1), 0x10002: ("byte", 1), 0x10003: ("byte", 1),

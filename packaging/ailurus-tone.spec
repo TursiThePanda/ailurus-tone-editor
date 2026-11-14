@@ -1,5 +1,7 @@
-# PyInstaller spec for Ailurus Tone Editor (macOS .app). Build with packaging/build_macos.sh.
+# PyInstaller spec for Ailurus Tone Editor: macOS .app (packaging/build_macos.sh) or a Windows
+# folder for the installer (packaging/build_windows.ps1). PyInstaller cannot cross-compile.
 import os
+import sys
 import tomllib
 from pathlib import Path
 
@@ -23,15 +25,23 @@ datas = [(str(ROOT / "ailurus_tone" / "web"), "ailurus_tone/web"),
 datas += collect_data_files("py_mini_racer")          # icudtl.dat must sit next to the package
 binaries = collect_dynamic_libs("py_mini_racer")     # libmini_racer.dylib (V8)
 hidden = (collect_submodules("uvicorn")
-          + collect_submodules("mcp", filter=lambda m: not m.startswith("mcp.cli")) + ["rtmidi", "PyObjCTools.AppHelper"])
+          + collect_submodules("mcp", filter=lambda m: not m.startswith("mcp.cli")) + ["rtmidi"])
+WINDOWS = sys.platform == "win32"
+if WINDOWS:
+    datas += collect_data_files("webview")           # pywebview's WebView2 loader and .NET glue
+    hidden += collect_submodules("webview.platforms.edgechromium") + ["clr"]
+else:
+    hidden += ["PyObjCTools.AppHelper"]
 
 a = Analysis([str(ROOT / "packaging" / "launch.py")], pathex=[str(ROOT)], binaries=binaries,
              datas=datas, hiddenimports=hidden, excludes=["tkinter", "PIL", "pytest"])
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="Ailurus Tone Editor",
-          console=False, argv_emulation=False, target_arch=None)
+          console=bool(os.environ.get("AILURUS_CONSOLE")), argv_emulation=False, target_arch=None,
+          icon=str(ROOT / "assets" / "build" / "icon.ico") if WINDOWS else None,
+          version=str(ROOT / "build" / "version_info.txt") if WINDOWS else None)
 coll = COLLECT(exe, a.binaries, a.datas, name="Ailurus Tone Editor")
-app = BUNDLE(
+app = None if WINDOWS else BUNDLE(
     coll, name="Ailurus Tone Editor.app", icon=str(ROOT / "assets" / "build" / "AppIcon.icns"),
     bundle_identifier=BUNDLE_ID, version=VERSION,
     info_plist={

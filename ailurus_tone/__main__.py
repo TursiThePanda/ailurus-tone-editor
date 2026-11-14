@@ -79,6 +79,7 @@ def main(argv=None):
         state.gx.error = None
     else:
         state.start_watcher()
+    state.port = port
     server = uvicorn.Server(uvicorn.Config(build(state, port), host=HOST, port=port, log_level="warning"))
     try:
         if "--server" in argv:
@@ -96,13 +97,18 @@ def main(argv=None):
                               width=1440, height=900, min_size=(1000, 660))
         set_dock_icon()
         menu = []
-        if updater.available():
+        if updater.available() and sys.platform == "darwin":   # Windows has no app menu: Settings → About
             from webview.menu import Menu, MenuAction
-            menu = [Menu("__app__", [MenuAction(
-                "Check for Updates…", lambda: updater.on_main_thread(updater.check_now))])]
-        # blocks on the main thread until the window closes; the hook runs once Cocoa is up
-        webview.start(lambda: updater.on_main_thread(updater.start), menu=menu)
+            menu = [Menu("__app__", [MenuAction("Check for Updates…", updater.check_now)])]
+
+        def close_window():               # WinSparkle started the installer: get out of its way
+            for w in list(webview.windows):
+                w.destroy()
+
+        # blocks on the main thread until the window closes; the hook runs once the window is up
+        webview.start(lambda: updater.start(on_quit=close_window), menu=menu)
         server.should_exit = True
+        updater.stop()
     finally:
         state.log.flush()
         state.close()

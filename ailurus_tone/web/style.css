@@ -110,3 +110,9 @@ dialog .bts .path { word-break: break-all; }
 .blk.drop-after { box-shadow: 4px 0 0 var(--accent); }
 
 /* unit switcher in the top bar (GX-10 / KATANA ...) */
+
+dialog .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 8px 0 12px; }
+dialog .tab { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; }
+dialog .tab.sel { border-bottom-color: var(--accent); color: var(--accent); }
+dialog .pane { min-height: 220px; max-height: 60vh; overflow: auto; }
+dialog .pane code { word-break: break-all; }

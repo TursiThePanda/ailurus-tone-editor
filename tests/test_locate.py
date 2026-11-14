@@ -59,3 +59,36 @@ def test_registry_values_to_folders(tmp_path):
     assert _path_in(f"{exe},0") == tmp_path
     assert _path_in(str(tmp_path)) == tmp_path
     assert _path_in("") is None
+
+
+def test_windows_bts_exe_with_embedded_html(tmp_path, monkeypatch):
+    """Windows BTS keeps the html tree as a zip inside its .exe; it is unpacked into our cache once."""
+    import io
+    import zipfile
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "cache"))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("html/js/config/product_setting.js", "x = { name:\t'GX-10' }")
+        z.writestr("html/js/config/effect_parameter.js", "")
+        z.writestr("html/../evil.txt", "never extracted")
+    inst = tmp_path / "Program Files (x86)" / "BOSS" / "BOSS TONE STUDIO for GX-10"
+    inst.mkdir(parents=True)
+    exe = inst / "BOSS TONE STUDIO for GX-10.exe"
+    exe.write_bytes(b"MZ" + b"\0" * 5000 + buf.getvalue() + b"\0" * 300)   # zip in the middle
+    root = locate(GX10_BTS, str(tmp_path / "Program Files (x86)"))
+    assert root.name == "js" and GX10_BTS.is_root(root)
+    assert root.is_relative_to(tmp_path / "cache")
+    assert not (tmp_path / "cache" / "Ailurus Tone Editor" / "evil.txt").exists()
+    assert locate(GX10_BTS, str(inst)) == root                      # second time: from the cache
+    with pytest.raises(BTSError):
+        locate(KATANA3_BTS, str(inst))                              # a GX-10 exe is not a KATANA BTS
+
+
+def test_midi_port_names_on_every_platform():
+    from ailurus_tone.roland import RolandPort
+    find = RolandPort.find_port
+    assert find(["IAC Bus 1", "GX-10"], "GX-10") == 1                      # macOS
+    assert find(["Microsoft GS Wavetable Synth 0", "GX-10 1"], "GX-10") == 1   # Windows
+    assert find(["2- KATANA3 2"], "KATANA3") == 0                         # Windows, 2nd device
+    assert find(["GX-100 1", "KATANA3 DAW CTRL 2"], "GX-10") is None      # no prefix matches
+    assert find(["KATANA3 DAW CTRL 2"], "KATANA3") is None

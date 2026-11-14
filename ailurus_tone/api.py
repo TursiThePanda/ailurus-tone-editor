@@ -8,6 +8,8 @@ from mcp.server.mcpserver import MCPServer
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 
+from . import updater
+from .about import about
 from .backup import load_config, save_config
 from .locate import BTSError
 from .roland import NotConnected
@@ -125,6 +127,18 @@ def register(mcp: MCPServer, s: State):
     async def config(req: Request) -> Response:
         b = await _body(req)
         return await _run(lambda: set_backup_dir(b["backup_dir"]))
+
+    @route("/api/about", methods=["GET"])
+    async def about_app(_: Request) -> Response:
+        return JSONResponse(about(getattr(s, "port", 8710), updater.available()))
+
+    @route("/api/update/check", methods=["POST"])
+    async def check_update(_: Request) -> Response:
+        """Settings → About → Check for updates: the updater shows its own window."""
+        if not updater.available():
+            return JSONResponse({"error": "Updates are checked by the installed app only."}, status_code=400)
+        updater.check_now()
+        return JSONResponse({"ok": True})
 
     @route("/api/bts", methods=["POST"])
     async def bts(req: Request) -> Response:

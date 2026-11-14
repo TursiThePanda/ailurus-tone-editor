@@ -4,17 +4,25 @@ Every unit has its own BTS. We look, in this order:
 1. the folder the user chose in Settings (any folder that contains the install: the .app on
    macOS, the install folder on Windows - the tables folder inside is found by itself),
 2. an environment variable (for development),
-3. the usual install places of the platform,
-4. on Windows, the install location the BTS installer recorded in the registry.
+3. on Windows, the install location the BTS installer recorded in the registry,
+4. the usual install places of the platform.
+
+On macOS the tables are plain files inside the .app. On Windows BTS keeps the same html tree
+as a zip embedded in its .exe; we unpack it once into our cache (keyed by the exe's size and
+time) and read it from there.
 
 A folder counts as the tables root only if its product_setting.js names the right unit, so a
 GX-10 BTS chosen for the KATANA (or the other way round) is refused, not misread.
 """
 from __future__ import annotations
 
+import io
 import os
 import re
+import shutil
+import struct
 import sys
+import zipfile
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +44,7 @@ class BTSProduct:
     setting: str               # relative path of product_setting.js below the tables root
     required: tuple[str, ...]  # further files the reader needs below the root
     mac: tuple[str, ...]       # exact macOS default (fast path)
+    html_sub: str = ""         # the tables root relative to BTS's html folder ("js" for the GX-10)
 
     def is_root(self, d: Path) -> bool:
         f = d / self.setting
@@ -57,6 +66,9 @@ def search_under(base: Path, product: BTSProduct, max_depth: int = MAX_DEPTH) ->
         d, depth = queue.popleft()
         if product.is_root(d):
             return d
+        found = from_exe(d / f"{product.app}.exe", product)
+        if found:
+            return found
         seen += 1
         if depth >= max_depth or seen > MAX_DIRS:
             continue
@@ -66,6 +78,63 @@ def search_under(base: Path, product: BTSProduct, max_depth: int = MAX_DEPTH) ->
             continue
         queue.extend((s, depth + 1) for s in subs)
     return None
+
+
+def cache_dir() -> Path:
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(base) / "Ailurus Tone Editor" / "bts"
+
+
+def _embedded_zip(data: bytes) -> zipfile.ZipFile | None:
+    """The zip stored somewhere inside an exe: find its end record and cut it out."""
+    end = data.rfind(b"PK\x05\x06")
+    if end < 0 or end + 22 > len(data):
+        return None
+    cd_size, cd_off = struct.unpack("<II", data[end + 12:end + 20])
+    comment = struct.unpack("<H", data[end + 20:end + 22])[0]
+    start = end - cd_size - cd_off
+    if start < 0:
+        return None
+    try:
+        return zipfile.ZipFile(io.BytesIO(data[start:end + 22 + comment]))
+    except zipfile.BadZipFile:
+        return None
+
+
+def from_exe(exe: Path, product: BTSProduct) -> Path | None:
+    """Windows BTS: unpack the html tree embedded in its .exe into our cache, once per build."""
+    try:
+        st = exe.stat()
+    except OSError:
+        return None
+    target = cache_dir() / f"{exe.stem}-{st.st_size}-{int(st.st_mtime)}"
+    root = target / "html" / product.html_sub if product.html_sub else target / "html"
+    if product.is_root(root):
+        return root
+    try:
+        z = _embedded_zip(exe.read_bytes())
+    except OSError:
+        return None
+    if not z:
+        return None
+    tmp = target.with_name(target.name + ".part")
+    shutil.rmtree(tmp, ignore_errors=True)
+    with z:
+        for info in z.infolist():
+            name = info.filename
+            if not name.startswith("html/") or ".." in Path(name).parts or Path(name).is_absolute():
+                continue
+            z.extract(info, tmp)
+    if not product.is_root(tmp / root.relative_to(target)):
+        shutil.rmtree(tmp, ignore_errors=True)
+        return None
+    shutil.rmtree(target, ignore_errors=True)
+    same_bts = re.compile(re.escape(exe.stem) + r"-\d+-\d+")
+    for old in cache_dir().iterdir():                    # older builds of the same BTS
+        if same_bts.fullmatch(old.name):
+            shutil.rmtree(old, ignore_errors=True)
+    tmp.rename(target)
+    return root
 
 
 def platform_places() -> list[Path]:
