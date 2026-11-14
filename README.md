@@ -5,7 +5,7 @@
 Open editor for the BOSS GX-10 and the BOSS KATANA Gen 3 amps — an alternative to BOSS TONE
 STUDIO, with its own app window
 and an MCP server, so an AI (Claude, Codex, Gemini, LM Studio, ...) can tune your sound live
-while you play. **Draft 1** - works on macOS from source; packaged app, Windows and Linux later.
+while you play. **Draft 1** - packaged apps for macOS and Windows; Linux later (runs from source).
 
 Not affiliated with, endorsed by or sponsored by Roland Corporation or BOSS. BOSS, GX-10, KATANA
 and BOSS TONE STUDIO are trademarks of Roland Corporation, named here only to say what the app
@@ -18,7 +18,7 @@ you installed it elsewhere, choose its folder in *Settings → BOSS TONE STUDIO*
 
 ## Run (from source)
 
-    python3.13 -m venv .venv
+    python3.13 -m venv .venv                         # Windows: py -3.12 (python-rtmidi has no 3.13 wheel there)
     .venv/bin/pip install -e ".[dev]"
     .venv/bin/python -m ailurus_tone                 # app window
     .venv/bin/python -m ailurus_tone --server        # no window, UI at http://127.0.0.1:8710/
@@ -42,12 +42,28 @@ Apple Silicon, macOS 13+). The app is ad-hoc signed, not notarized: after downlo
 macOS refuses the first start - open System Settings → Privacy & Security → "Open Anyway".
 BOSS TONE STUDIO for your unit must still be installed (its tables are read at runtime).
 
+## Build the Windows app
+
+On Windows 10/11 x64 with Python 3.12 and [Inno Setup 6](https://jrsoftware.org/isinfo.php):
+
+    py -3.12 -m venv .venv
+    .venv\Scripts\pip install -e ".[dev]"
+    powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
+
+Gives `dist\Ailurus-Tone-Editor-<version>-windows-setup.exe`, a per-user installer (no admin
+rights). It is not code-signed, so SmartScreen warns on the first start - *More info → Run
+anyway*. BOSS TONE STUDIO keeps its tables inside its .exe on Windows; the app unpacks them
+once into `%LOCALAPPDATA%\Ailurus Tone Editor\bts`. A log of the packaged app is in
+`%APPDATA%\Ailurus Tone Editor\app.log`.
+
 ## Updates
 
-The app checks for a new version once a day and on demand (*Ailurus Tone Editor → Check
-for Updates…*), using [Sparkle](https://sparkle-project.org). The feed is `appcast.xml` on
-the latest GitHub release; every update is verified with an EdDSA signature before it is
-installed, and an update installed this way does not trigger "Open Anyway" again.
+The app checks for a new version once a day and on demand (*Settings → About → Check for
+updates*; on macOS also *Ailurus Tone Editor → Check for Updates…*), using
+[Sparkle](https://sparkle-project.org) on macOS and [WinSparkle](https://winsparkle.org) on
+Windows. Both read `appcast.xml` on the latest GitHub release, which has one item per
+platform; every update is verified with an EdDSA signature before it is installed. On macOS
+an update installed this way does not trigger "Open Anyway" again.
 Releases are built by `.github/workflows/release.yml` when a `v*` tag is pushed.
 
 ## MCP
@@ -70,7 +86,7 @@ Claude Code: `claude mcp add --transport http ailurus-tone http://127.0.0.1:8710
 - KATANA Gen 3: live edits of every block (edit buffer only, memories are never written),
   patch switching (PANEL, A:CH1..B:CH4), signal order shown as on the amp, backup of all
   9 memories. The chain is set with the CHAIN parameter, not by dragging.
-- Not yet: Save / Save as / Restore, `.tsl` import/export, Compare, Windows/Linux packaging,
+- Not yet: Save / Save as / Restore, `.tsl` import/export, Compare, Linux packaging,
   notarized build, MCP bearer token, divider/splitter branch layout.
 
 ## Layout
@@ -92,9 +108,12 @@ Claude Code: `claude mcp add --transport http ailurus-tone http://127.0.0.1:8710
     ailurus_tone/history.py     activity log (what changed, by whom), read by the AI
     tools/make_icon.py          builds the app icon (Icon Composer layers, icns, ico)
     tools/probe_unit.py         read-only first look at a unit not supported yet (BTS tables, identity, RQ1)
-    ailurus_tone/updater.py     Sparkle automatic updates (packaged macOS app only)
-    packaging/                  PyInstaller spec + build_macos.sh (.app and .dmg, bundles Sparkle)
-    .github/workflows/          release build: DMG + signed appcast.xml on a v* tag
+    ailurus_tone/about.py       version, links, licence and libraries for Settings → About
+    ailurus_tone/updater.py     automatic updates of the packaged app (Sparkle / WinSparkle)
+    packaging/                  PyInstaller spec, build_macos.sh (.app, .dmg, Sparkle),
+                                build_windows.ps1 + installer.iss (Inno Setup, WinSparkle)
+    tools/appcast_add_windows.py  adds the signed Windows item to the release appcast
+    .github/workflows/          release build: DMG + Windows installer + signed appcast.xml on a v* tag
     tests/                      unit tests, no unit needed
 
 ## Other BOSS units
