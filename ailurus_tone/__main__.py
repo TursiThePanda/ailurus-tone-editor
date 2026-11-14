@@ -52,7 +52,8 @@ class WindowAPI:
 
 
 def build(state: State, port: int = PORT):
-    mcp = MCPServer(name="ailurus-tone", title="Ailurus Tone Editor (BOSS GX-10)", instructions=mcp_tools.INSTRUCTIONS)
+    mcp = MCPServer(name="ailurus-tone", title="Ailurus Tone Editor (BOSS GX-10, KATANA Gen 3)",
+                    instructions=mcp_tools.INSTRUCTIONS)
     mcp_tools.register(mcp, state)
     api.register(mcp, state)
     return mcp.streamable_http_app(
@@ -67,13 +68,15 @@ def build(state: State, port: int = PORT):
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     port = int(argv[argv.index("--port") + 1]) if "--port" in argv else PORT
-    state = State()
+    state = State(only=["gx10"] if "--demo" in argv else None)
     if "--demo" in argv:
         from .demo import load_demo
         state.log.folder = None   # demo edits never reach the real diary
         state.log.events.clear()
+        if not state.gx:
+            sys.exit("Demo mode needs BOSS TONE STUDIO for GX-10 installed (for the parameter tables).")
         load_demo(state.gx, argv[argv.index("--demo") + 1])
-        state.error = None
+        state.gx.error = None
     else:
         state.start_watcher()
     server = uvicorn.Server(uvicorn.Config(build(state, port), host=HOST, port=port, log_level="warning"))
@@ -102,8 +105,7 @@ def main(argv=None):
         server.should_exit = True
     finally:
         state.log.flush()
-        if state.gx and state.gx.connected:
-            state.gx.disconnect()
+        state.close()
 
 
 if __name__ == "__main__":

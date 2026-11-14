@@ -9,14 +9,16 @@
 </head>
 <body>
 <header class="bar">
-  <span id="conn" class="conn off" data-help="Connection to the GX-10 over USB."></span>
+  <span id="conn" class="conn off" data-help="Connection to the unit over USB."></span>
   <span id="connText" class="muted">Not connected</span>
+  <span id="devices" class="devices" role="tablist" aria-label="Unit to edit"></span>
   <span id="patchLabel" class="patch"></span>
   <span id="edited" class="badge warn hidden" data-help="What you hear differs from the patch stored in this slot. Draft 1 cannot save yet.">edited, not saved</span>
+  <span id="readonly" class="badge hidden" data-help="This version only reads this unit: it shows the sound but cannot change it yet.">read only</span>
   <span class="grow"></span>
   <button id="undoBtn" title="Undo (Cmd/Ctrl+Z)">Undo</button>
   <button id="redoBtn" title="Redo (Cmd/Ctrl+Shift+Z)">Redo</button>
-  <button id="backupBtn" data-help="Back up all 198 user patches into the default backup folder.">Back up</button>
+  <button id="backupBtn" data-help="Back up all 198 GX-10 user patches into the default backup folder.">Back up</button>
   <button id="exportBtn" data-help="Back up all patches into a folder you choose.">Export to…</button>
   <button id="settingsBtn" aria-label="Settings">Settings</button>
 </header>
@@ -33,7 +35,7 @@
     <div class="label">Signal chain</div>
     <div id="chain" class="chain"></div>
     <div id="fxPanel" class="fx">
-      <div class="empty muted">Plug the GX-10 straight into the computer and quit BOSS TONE STUDIO.</div>
+      <div class="empty muted">Plug in the GX-10 or the KATANA and quit BOSS TONE STUDIO.</div>
     </div>
   </section>
 

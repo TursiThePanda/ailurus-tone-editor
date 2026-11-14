@@ -1,4 +1,4 @@
-"""REST endpoints for the app window. Thin: every route delegates to State / GX10."""
+"""REST endpoints for the app window. Thin: every route delegates to State and the active unit."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,7 +9,6 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 
 from .backup import load_config, save_config
-from .device import slot_label
 from .roland import NotConnected
 from .state import State
 
@@ -69,8 +68,13 @@ def register(mcp: MCPServer, s: State):
 
     @route("/api/patches", methods=["GET"])
     async def patches(_: Request) -> Response:
-        return await _run(lambda: {"patches": [{"slot": i, "label": slot_label(i), "name": n}
-                                               for i, n in enumerate(s.need().names)]})
+        return await _run(lambda: {"device": s.active, "patches": s.need().patch_list()})
+
+    @route("/api/device", methods=["POST"])
+    async def device(req: Request) -> Response:
+        """Choose which connected unit the window edits."""
+        b = await _body(req)
+        return await _run(lambda: s.select_device(str(b["id"])))
 
     @route("/api/fx/{n:int}", methods=["GET"])
     async def fx(req: Request) -> Response:

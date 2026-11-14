@@ -95,10 +95,10 @@ class RolandPort:
 
     # ---- incoming ------------------------------------------------------------
     def _on_midi(self, event, _data=None):
-        msg = event[0]
-        if len(msg) < 15 or msg[:8] != self.header or msg[8] != 0x12:
+        msg, h = event[0], len(self.header)
+        if len(msg) < h + 7 or msg[:h] != self.header or msg[h] != 0x12:
             return
-        addr, data = msg[9:13], msg[13:-2]
+        addr, data = msg[h + 1:h + 5], msg[h + 5:-2]
         if self._collecting:
             self._inbox.put((addr, data))
         else:
@@ -116,7 +116,7 @@ class RolandPort:
     # ---- transactions --------------------------------------------------------
     def _send(self, msg):
         if not self.connected:
-            raise NotConnected("GX-10 is not connected")
+            raise NotConnected(f"{self.port_name} is not connected")
         self.mo.send_message(msg)
 
     def rq1(self, addr, size: int, timeout: float = 1.5) -> list[int]:

@@ -103,3 +103,12 @@ dialog .row.end { justify-content: flex-end; margin-top: 14px; }
 .blk.dragging { opacity: .4; }
 .blk.drop-before { box-shadow: -4px 0 0 var(--accent); }
 .blk.drop-after { box-shadow: 4px 0 0 var(--accent); }
+
+/* unit switcher in the top bar (GX-10 / KATANA ...) */
+.devices { display: inline-flex; gap: 0; margin-left: 6px; }
+.devices .dev { display: inline-flex; align-items: center; gap: 6px; border-radius: 0; margin-left: -1px; }
+.devices .dev:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+.devices .dev:last-child { border-radius: 0 6px 6px 0; }
+.devices .dev.sel { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); position: relative; }
+.devices .dev:disabled { opacity: .55; cursor: default; }
+.devices .conn { width: 7px; height: 7px; }

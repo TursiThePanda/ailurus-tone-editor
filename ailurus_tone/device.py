@@ -83,6 +83,12 @@ class Change:
 
 
 class GX10:
+    kind = "gx10"
+    title = "GX-10"
+    port_name = PORT_NAME
+    readonly = False
+    supports_backup = True
+
     def __init__(self, tables: Tables, on_event=None, log: ActivityLog | None = None):
         self.t = tables
         self.log = log or ActivityLog(None)
@@ -95,6 +101,25 @@ class GX10:
         self.names: list[str] = []
         self.history: dict[int, dict] = {}     # patch -> {"undo": [...], "redo": [...]}
         self.edited = False
+        self.error: str | None = None
+
+    def poll(self):
+        """The GX-10 reports panel changes by itself (editor mode): nothing to poll."""
+
+    def patch_list(self) -> list[dict]:
+        return [{"slot": i, "label": slot_label(i), "name": n} for i, n in enumerate(self.names)]
+
+    @staticmethod
+    def parse_slot(slot: str) -> int:
+        """'U66-1' -> 0-based user slot 195."""
+        try:
+            bank, num = slot.upper().strip().lstrip("U").split("-")
+            n = (int(bank) - 1) * 3 + int(num) - 1
+        except ValueError:
+            n, num = -1, "0"
+        if not 0 <= n < VISIBLE_USER or not 1 <= int(num) <= 3:
+            raise ValueError("slot must be U01-1 .. U66-3")
+        return n
 
     # ---- connection ----------------------------------------------------------
     def connect(self):
@@ -230,7 +255,7 @@ class GX10:
 
     def _log(self, who: str, action: str, fx: int | None = None, param: str | None = None,
              old=None, new=None, merge: bool = False):
-        ev = {"who": who, "action": action, "patch": self.label(), "name": self.patch_name()}
+        ev = {"who": who, "action": action, "patch": self.label(), "name": self.patch_name(), "device": self.title}
         if param == CHAIN:
             ev.update(param=CHAIN, old=old, new=new, display=self._move_text(old, new))
         elif fx is not None:
@@ -252,6 +277,7 @@ class GX10:
                 fxs.append({"fx": fx, "type": ftype, "color": self.t.color(ftype), "on": bool(blk[1])})
             h = self.history.get(self.current, {"undo": [], "redo": []})
             return {
+                "readonly": False,
                 "current": self.current,
                 "label": self.label(),
                 "name": name, "edited": self.edited, "chain": fxs,

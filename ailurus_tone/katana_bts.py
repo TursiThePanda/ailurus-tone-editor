@@ -1,0 +1,295 @@
+"""Load the KATANA Gen 3 parameter tables from the user's installed BOSS TONE STUDIO at runtime.
+
+As for the GX-10, nothing of Roland's is shipped: everything is read from the local BTS install.
+Sources inside its html/ folder:
+- js/config/address_map.js   every parameter: address, size, offset, min, max, PRMID name
+- js/config/product_setting.js  model id (SysEx header) and BTS version
+- js/config/resource.js      value lists (amp, booster and FX type names)
+- export/item.json           which UI widget edits which parameter ("pid": "PATCH%DELAY(1)%5")
+- export/layout.div          the BTS window as HTML: the label text of each widget and its value
+                             texts ("stringer": a list of texts, or a JS format expression)
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+import threading
+from html.parser import HTMLParser
+from pathlib import Path
+
+from py_mini_racer import MiniRacer
+
+from .bts import BTSError
+
+CANDIDATES = {
+    "darwin": ["/Applications/BOSS/KATANA Gen 3/BOSS TONE STUDIO for KATANA Gen 3.app/Contents/Resources/html"],
+    "win32": [],
+    "linux": [],
+}
+
+# size tokens in address_map.js -> (kind, byte count); kinds as in bts.layout()
+SIZES = {"INTEGER1x7": ("byte", 1), "INTEGER2x4": ("nibbles", 2), "INTEGER2x7": ("byte7", 2),
+         "INTEGER4x4": ("nibbles", 4)}
+
+ENTRY = re.compile(r"\{\s*addr:\s*0x([0-9A-Fa-f]{8}),\s*size:\s*([A-Za-z0-9x]+),\s*ofs:\s*(-?\d+),\s*"
+                   r"init:\s*('[^']*'|-?\d+),\s*min:\s*(-?\d+),\s*max:\s*(-?\d+),\s*name:\s*'([^']+)'")
+CHILD = re.compile(r"\{\s*addr:\s*0x([0-9A-Fa-f]{8}),\s*size:\s*0,\s*child:\s*(\w+),\s*name:\s*'([^']+)'")
+TABLE = re.compile(r"var\s+(\w+)\s*=\s*\[(.*?)\n\s*\];", re.S)
+
+
+def find_katana_root(override: str | None = None) -> Path:
+    paths = [override] if override else []
+    paths += [os.environ.get("KATANA3_BTS_HTML", "")] + CANDIDATES.get(sys.platform, [])
+    for p in paths:
+        root = Path(p) if p else None
+        if root and (root / "js" / "config" / "address_map.js").is_file() and (root / "export" / "item.json").is_file():
+            return root
+    raise BTSError("BOSS TONE STUDIO for KATANA Gen 3 was not found. Install it from boss.info "
+                   "(it does not need to run), or set KATANA3_BTS_HTML to its html folder.")
+
+
+def addr_bytes(hex8: str) -> list[int]:
+    """address_map writes 4 raw 7-bit bytes as one literal: '20100000' -> [0x20, 0x10, 0, 0]."""
+    return list(bytes.fromhex(hex8))
+
+
+class _Layout(HTMLParser):
+    """Collect, per element id: its attributes, the texts of its <p> children and of its <a> options."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.el: dict[str, dict] = {}
+        self._stack: list[tuple[str, str | None]] = []
+        self._text: list[str] | None = None
+        self._text_tag = ""
+
+    def _owner(self) -> str | None:
+        for _, i in reversed(self._stack):
+            if i:
+                return i
+        return None
+
+    VOID = {"br", "img", "input", "meta", "link", "hr", "source", "wbr", "area", "col", "embed"}
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == "br":
+            if self._text is not None:
+                self._text.append(" ")
+            return
+        if tag in self.VOID:
+            return
+        i = a.get("id")
+        if i:
+            self.el[i] = {"attrs": a, "p": [], "a": []}
+        self._stack.append((tag, i))
+        if tag in ("p", "a"):
+            self._text, self._text_tag = [], tag
+
+    def handle_endtag(self, tag):
+        if tag in self.VOID:
+            return
+        if tag in ("p", "a") and self._text is not None:
+            owner = self._owner()
+            if owner:
+                self.el[owner][self._text_tag].append(re.sub(r"\s+", " ", "".join(self._text)).strip())
+            self._text = None
+        while self._stack:
+            t, _ = self._stack.pop()
+            if t == tag:
+                break
+
+    def handle_data(self, data):
+        if self._text is not None:
+            self._text.append(data)
+
+
+def pretty(prmid: str, prefix: str) -> str:
+    """PRMID_PATCH_DELAY_HIGH_CUT -> 'HIGH CUT' (used only when BTS shows no label)."""
+    return prmid[len(prefix):].replace("_", " ").strip() if prmid.startswith(prefix) else prmid
+
+
+class KatanaTables:
+    def __init__(self, root: Path):
+        self.root = root
+        self._lock = threading.Lock()
+        cfg = root / "js" / "config"
+        try:
+            product = (cfg / "product_setting.js").read_text(encoding="utf-8-sig")
+            mid = re.search(r"modelId:\s*'([0-9A-Fa-f]+)'", product).group(1)
+            dev = re.search(r"deviceId:\s*'([0-9A-Fa-f]+)'", product).group(1)
+            v = re.search(r"version:\s*'([^']+)'", product)
+            self.bts_version = v.group(1) if v else "?"
+            self.header = [0xF0, 0x41, int(dev, 16)] + list(bytes.fromhex(mid))
+            self._read_address_map((cfg / "address_map.js").read_text(encoding="utf-8-sig"))
+            self._read_resources((cfg / "resource.js").read_text(encoding="utf-8-sig"))
+            self._read_widgets(root / "export")
+        except BTSError:
+            raise
+        except Exception as e:  # format changed in a BTS update
+            raise BTSError(f"Could not read KATANA BTS {getattr(self, 'bts_version', '?')} tables: {e}") from e
+        self._ctx = MiniRacer()
+        self._ctx.eval("function __fmt(expr, value) { try { return String(eval(expr)); } catch (e) { return null; } }")
+
+    # ---- address map -------------------------------------------------------------
+    def _read_address_map(self, js: str):
+        self.tables: dict[str, list[dict]] = {}
+        children: dict[str, list[tuple[list[int], str, str]]] = {}
+        for name, body in TABLE.findall(js):
+            entries = ENTRY.findall(body)
+            if entries:
+                rows = []
+                for a, size, ofs, _init, lo, hi, prm in entries:
+                    off = addr_bytes(a)
+                    lin = (off[2] << 7) | off[3]
+                    if size.isdigit():
+                        kind, n = "text", int(size)
+                    elif size in SIZES:
+                        kind, n = SIZES[size]
+                    else:
+                        raise BTSError(f"unknown size {size} in {name}")
+                    rows.append({"offset": lin, "kind": kind, "n": n, "ofs": int(ofs),
+                                 "min": int(lo), "max": int(hi), "id": prm})
+                self.tables[name] = rows
+            kids = CHILD.findall(body)
+            if kids:
+                children[name] = [(addr_bytes(a), child, bname) for a, child, bname in kids]
+        patch = children.get("PATCH")
+        if not patch:
+            raise BTSError("PATCH layout not found in address_map.js")
+        # block name ('DELAY(4)') -> (offset bytes inside a patch, table name, size in bytes)
+        self.blocks: dict[str, tuple[list[int], str, int]] = {}
+        for off, child, bname in patch:
+            rows = self.tables.get(child, [])
+            size = max((r["offset"] + r["n"] for r in rows), default=0)
+            self.blocks[bname] = (off, child, size)
+        top = {bname: off for off, _, bname in children.get("", [])}
+        self.top = top
+        # FX_DETAIL holds every FX type's params one after another, grouped by name prefix in type order
+        self.fx_groups = self._groups("PATCH_FX_DETAIL", "PRMID_PATCH_FX_DETAIL_")
+        self.pedal_groups = self._groups("PATCH_PEDALFX", "PRMID_PATCH_PEDALFX_")
+
+    def _groups(self, table: str, prefix: str) -> list[str]:
+        order: list[str] = []
+        for r in self.tables.get(table, []):
+            g = r["id"][len(prefix):].split("_")[0]
+            if not order or order[-1] != g:
+                order.append(g)
+        return order
+
+    # ---- value lists -------------------------------------------------------------
+    def _read_resources(self, js: str):
+        self.resources = [[x.strip() for x in t.split(",")]
+                          for t in re.findall(r'\{\s*text:\s*"([^"]*)"\s*\}', js)]
+
+        def find(first: str, n: int) -> list[str]:
+            for r in self.resources:
+                if r and r[0] == first and len(r) == n:
+                    return r
+            raise BTSError(f"value list starting with {first} ({n} items) not found in resource.js")
+
+        self.fx_types = find("T.WAH", len(self.fx_groups))
+        bmax = next(r["max"] for r in self.tables["PATCH_BOOSTER"] if r["id"].endswith("_TYPE"))
+        self.booster_types = find("MID BOOST", bmax + 1)
+
+    # ---- widgets: labels, option texts and value formats ---------------------------
+    def _read_widgets(self, export: Path):
+        items = json.loads((export / "item.json").read_text(encoding="utf-8-sig"))
+        lay = _Layout()
+        lay.feed((export / "layout.div").read_text(encoding="utf-8-sig"))
+        el = lay.el
+        self.ui: dict[tuple[str, int], dict] = {}   # (block base name, linear offset) -> widget info
+        for wid, it in items.items():
+            pid = it.get("pid") if isinstance(it, dict) else None
+            if not pid or not pid.startswith("PATCH%") or pid.count("%") != 2:
+                continue
+            if wid.startswith(("asgn-", "panel-")) or wid.endswith(("-spinner", "-watcher")):
+                continue
+            _, block, off = pid.split("%")
+            key = (re.sub(r"\(\d+\)$", "", block), int(off))
+            if key in self.ui:
+                continue
+            e = el.get(wid, {"attrs": {}, "p": [], "a": []})
+            label_id = e["attrs"].get("description") or re.sub(r"-(dial|knob|slider|select-box|btn)$", "-label", wid)
+            label = (el.get(label_id, {}).get("p") or [""])[0]
+            info = {"label": label, "widget": wid}
+            if wid.endswith("select-box"):
+                texts = el.get(wid + "-box", {}).get("a", [])
+                values = it.get("list_order") or list(range(len(texts)))
+                if texts and len(values) == len(texts):
+                    info["options_by_value"] = dict(zip(values, texts, strict=True))
+            st = el.get(it.get("stringer", ""), None)
+            if st:
+                fmt = st["attrs"].get("format") or ""
+                if fmt:
+                    info["format"] = fmt.replace("<br>", " ")
+                elif st["p"]:
+                    info["texts"] = st["p"]
+            coef = e["attrs"].get("value-coef")
+            if coef:
+                info["coef"] = float(coef)
+            self.ui[key] = info
+        # widgets bound to a 'panel-' knob only (amp section) are still wanted
+        for wid, it in items.items():
+            pid = it.get("pid") if isinstance(it, dict) else None
+            if (not pid or not wid.startswith("panel-") or not pid.startswith("PATCH%")
+                    or wid.endswith(("-spinner", "-watcher"))):
+                continue
+            _, block, off = pid.split("%")
+            key = (re.sub(r"\(\d+\)$", "", block), int(off))
+            if key not in self.ui:
+                e = el.get(wid, {"attrs": {}})
+                label_id = e["attrs"].get("description", "")
+                self.ui[key] = {"label": (el.get(label_id, {}).get("p") or [""])[0], "widget": wid}
+
+    # ---- public helpers ----------------------------------------------------------------
+    def params(self, block: str, prefix: str | None = None) -> list[dict]:
+        """Parameters of one patch block ('DELAY(4)'), each with label/options from the BTS window.
+        `prefix` keeps only the params of one FX type (FX_DETAIL holds all types)."""
+        _, table, _ = self.blocks[block]
+        base = re.sub(r"\(\d+\)$", "", block)
+        tprefix = "PRMID_" + table + "_"
+        out = []
+        for r in self.tables[table]:
+            if prefix and not r["id"][len(tprefix):].startswith(prefix + "_"):
+                continue
+            ui = self.ui.get((base, r["offset"]), {})
+            name = ui.get("label") or pretty(r["id"], tprefix + (prefix + "_" if prefix else ""))
+            out.append(dict(r, name=name.upper(), ui=ui))
+        return out
+
+    def options(self, p: dict) -> list[str] | None:
+        ui = p.get("ui", {})
+        n = p["max"] - p["min"] + 1
+        if "options_by_value" in ui:
+            o = ui["options_by_value"]
+            if all((p["min"] + i) in o for i in range(n)):
+                return [o[p["min"] + i] for i in range(n)]
+        texts = ui.get("texts") or []
+        if len(texts) in (n, n + 1):   # the stringer's last <p> is the visible "current value" copy
+            return texts[:n]
+        if n == 2 and p["id"].endswith("_SW"):
+            return ["OFF", "ON"]
+        return None
+
+    def display(self, p: dict, value: int) -> str:
+        opts = self.options(p)
+        if opts:
+            i = value - p["min"]
+            if 0 <= i < len(opts):
+                return opts[i]
+        ui = p.get("ui", {})
+        if ui.get("format"):
+            with self._lock:
+                out = self._ctx.call("__fmt", ui["format"], value)
+            if out is not None:
+                return out
+        if ui.get("coef"):
+            v = value * ui["coef"]
+            return f"{v:g}"
+        return str(value)
+
+    def close(self):
+        self._ctx.close()

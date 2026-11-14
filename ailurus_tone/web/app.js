@@ -1,7 +1,8 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const LANG = (navigator.language || "en").toLowerCase().startsWith("cs") ? "cs" : "en";
-let HELP = {}, state = null, patches = [], selFx = null, fxData = null, lastVersion = -1;
+let HELP = {}, state = null, patches = [], patchesFor = null, selFx = null, fxData = null, lastVersion = -1;
+const EMPTY = "Plug in the GX-10 or the KATANA and quit BOSS TONE STUDIO.";
 let dragging = null; // {fx, param, old}
 
 async function api(path, body) {
@@ -37,18 +38,31 @@ document.addEventListener("mousedown", hideTip);
 function renderTop() {
   const c = state?.connected;
   $("conn").className = "conn " + (c ? "on" : "off");
-  $("connText").textContent = c ? "GX-10 connected" : "Not connected";
+  $("connText").textContent = c ? `${state.device_title} connected` : "Not connected";
   $("patchLabel").textContent = c ? `${state.patch.label}  ${state.patch.name}` : "";
   $("edited").classList.toggle("hidden", !(c && state.patch.edited));
+  $("readonly").classList.toggle("hidden", !(c && state.patch.readonly));
   $("undoBtn").disabled = !(c && state.patch.can_undo);
   $("redoBtn").disabled = !(c && state.patch.can_redo);
-  for (const id of ["backupBtn", "exportBtn"]) $(id).disabled = !c || !!state.backup?.running;
+  for (const id of ["backupBtn", "exportBtn"]) $(id).disabled = !c || !!state.backup?.running || state.device !== "gx10";
+  renderDevices();
   if (state?.error && !c) { $("message").textContent = state.error; $("message").classList.remove("hidden"); }
   else if (c && $("message").textContent === state?.error) $("message").classList.add("hidden");
   const b = state?.backup;
   $("backupState").innerHTML = !b ? "" : b.running ? `Backing up… ${b.done}/${b.total}`
     : b.error ? `<span class="err">Backup failed: ${esc(b.error)}</span>`
     : b.path ? `Backup saved (${b.seconds} s): ${esc(b.path)}` : "";
+}
+
+// one button per set-up unit; shown once there is a choice to make (or a unit is missing its BTS)
+function renderDevices() {
+  const list = (state?.devices || []).filter((d) => !d.missing);
+  const box = $("devices");
+  const html = list.length < 2 ? "" : list.map((d) => `<button class="dev ${d.active ? "sel" : ""} ${d.connected ? "" : "off"}" data-dev="${esc(d.id)}"
+      role="tab" aria-selected="${d.active}" ${d.connected ? "" : "disabled"}
+      data-help="${esc(d.connected ? `Edit the ${d.title}${d.readonly ? " (read only for now)" : ""}.` : d.error || `${d.title} is not connected.`)}">
+      <span class="conn ${d.connected ? "on" : "off"}"></span>${esc(d.title)}</button>`).join("");
+  if (box.dataset.html !== html) { box.innerHTML = html; box.dataset.html = html; }  // keep the buttons alive between polls
 }
 
 function renderPatches() {
@@ -67,39 +81,41 @@ function renderChain() {
     (i ? '<span class="arrow">›</span>' : "") +
     `<div class="blk c-${esc(b.color)} ${b.on ? "" : "off"} ${b.fx === selFx ? "sel" : ""}" data-fx="${b.fx}" tabindex="0"
        draggable="${movable}" data-help="${esc(helpFor("types", b.type))}${movable ? " Drag to move it in the chain." : ""}">
-       <div class="t">${esc(b.type)}</div><div class="n">fx ${b.fx}</div></div>`).join("");
+       <div class="t">${esc(b.type)}</div><div class="n">${b.sub != null ? esc(b.sub) || "&nbsp;" : "fx " + b.fx}</div></div>`).join("");
 }
 
 function renderFx() {
   const d = fxData;
-  if (!d) { $("fxPanel").className = "fx"; $("fxPanel").innerHTML = '<div class="empty muted">Plug the GX-10 straight into the computer and quit BOSS TONE STUDIO.</div>'; return; }
+  if (!d) { $("fxPanel").className = "fx"; $("fxPanel").innerHTML = `<div class="empty muted">${EMPTY}</div>`; return; }
   const sw = d.params.find((p) => p.name === "OFF/ON");
+  const ro = d.readonly ? "disabled" : "";
   const rows = d.params.filter((p) => p !== sw).map((p) => {
     const h = esc(helpFor("params", p.name));
     const dot = p.changed ? `<span class="dot" data-help="Changed. Saved value: ${esc(p.saved)}"></span>` : "";
     const ctl = p.options
-      ? `<select data-param="${esc(p.name)}">${p.options.map((o, i) => `<option value="${i + p.min}" ${i + p.min === p.value ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`
-      : `<input type="range" min="${p.min}" max="${p.max}" step="1" value="${p.value}" data-param="${esc(p.name)}">`;
+      ? `<select data-param="${esc(p.name)}" ${ro}>${p.options.map((o, i) => `<option value="${i + p.min}" ${i + p.min === p.value ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`
+      : `<input type="range" min="${p.min}" max="${p.max}" step="1" value="${p.value}" data-param="${esc(p.name)}" ${ro}>`;
     // typed entry: the raw number; the formatted text (e.g. "+10dB", "420 ms") sits next to it when it differs
     const shown = String(p.display) === String(p.value) ? "" : esc(p.display);
     const num = p.options ? "" : `<div class="vrow">
-        <input class="num" type="number" min="${p.min}" max="${p.max}" step="1" value="${p.value}"
+        <input class="num" type="number" min="${p.min}" max="${p.max}" step="1" value="${p.value}" ${ro}
                data-num="${esc(p.name)}" aria-label="${esc(p.name)} value" data-help="Type a value ${p.min} to ${p.max}, then Enter.">
         <span class="v" data-v="${esc(p.name)}">${shown}</span></div>`;
     return `<div class="prm"><label data-help="${h}">${esc(p.name)} ${dot}</label>${ctl}${num}</div>`;
   }).join("");
   $("fxPanel").className = `fx c-${esc(d.color)}`;
   $("fxPanel").innerHTML = `<div class="fxhead"><span class="swatch"></span><span class="t" data-help="${esc(helpFor("types", d.type))}">${esc(d.type)}</span>
-      <span class="muted">fx ${d.fx}</span><span class="grow"></span>
-      ${sw ? `<label class="switch" data-help="${esc(helpFor("params", "OFF/ON"))}"><input type="checkbox" id="fxOn" ${d.on ? "checked" : ""}> On</label>` : ""}</div>
+      <span class="muted">${d.sub != null ? esc(d.sub) : "fx " + d.fx}</span><span class="grow"></span>
+      ${sw ? `<label class="switch" data-help="${esc(helpFor("params", "OFF/ON"))}"><input type="checkbox" id="fxOn" ${d.on ? "checked" : ""} ${ro}> On</label>` : ""}</div>
     <div class="params">${rows || '<span class="muted">No editable parameters.</span>'}</div>`;
 }
 
 const WHO = { you: "You", ai: "AI", unit: "Unit" };
-const WHO_HELP = { you: "You, in this window", ai: "An AI through MCP", unit: "A knob or switch on the GX-10" };
+const WHO_HELP = { you: "You, in this window", ai: "An AI through MCP", unit: "A knob or switch on the unit itself" };
 
 function describeEvent(e) {
-  if (e.action === "patch") return `→ ${esc(e.patch)} ${esc(e.name)}`;
+  const dev = e.device && e.device !== state?.device_title ? `<span class="act">${esc(e.device)}</span> ` : "";
+  if (e.action === "patch") return `${dev}→ ${esc(e.patch)} ${esc(e.name)}`;
   if (e.param === "CHAIN") {
     const verb = e.action === "set" ? "" : `<span class="act">${e.action}</span> `;
     return `${verb}${esc(e.display)}`;
@@ -134,7 +150,11 @@ async function poll() {
     const s = await api("/api/state");
     const wasConnected = state?.connected, prevPatch = state?.patch?.current;
     state = s;
-    if (s.connected && (!wasConnected || !patches.length)) patches = (await api("/api/patches")).patches;
+    if (s.device !== patchesFor) { patches = []; selFx = null; fxData = null; lastVersion = -1; }
+    if (s.connected && (!wasConnected || !patches.length || patchesFor !== s.device)) {
+      const r = await api("/api/patches"); patches = r.patches; patchesFor = r.device;
+    }
+    if (!s.connected) patchesFor = s.device;
     renderTop();
     if (s.version !== lastVersion || s.patch?.current !== prevPatch) {
       lastVersion = s.version;
@@ -151,6 +171,11 @@ $("chain").addEventListener("click", (e) => {
 });
 $("chain").addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.closest(".blk")?.click(); });
 $("search").addEventListener("input", renderPatches);
+$("devices").addEventListener("click", async (e) => {
+  const b = e.target.closest(".dev"); if (!b || b.classList.contains("sel")) return;
+  if (state?.patch?.edited && !confirm("The other unit keeps its sound; this one keeps your unsaved changes too. Switch the view?")) return;
+  try { await api("/api/device", { id: b.dataset.dev }); selFx = null; patches = []; lastVersion = -1; } catch (err) { flash(err.message); }
+});
 $("patchList").addEventListener("click", async (e) => {
   const r = e.target.closest(".prow"); if (!r) return;
   if (state?.patch?.edited && !confirm("Switching patch discards your unsaved changes. Continue?")) return;
