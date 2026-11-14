@@ -1,5 +1,6 @@
 # PyInstaller spec for Ailurus Tone Editor: macOS .app (packaging/build_macos.sh) or a Windows
 # folder for the installer (packaging/build_windows.ps1). PyInstaller cannot cross-compile.
+import json
 import os
 import sys
 import tomllib
@@ -10,17 +11,16 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, co
 ROOT = Path(SPECPATH).parent
 VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
 BUNDLE_ID = "io.github.tursithepanda.ailurus-tone-editor"
-# Sparkle update feed = appcast.xml on the latest GitHub release (override for local tests)
-FEED_URL = os.environ.get("AILURUS_FEED_URL") or \
-    "https://github.com/TursiThePanda/ailurus-tone-editor/releases/latest/download/appcast.xml"
-# Every update must be signed with this key's private half (login Keychain, account
-# "ailurus-tone-editor", and the repository secret SPARKLE_ED_PRIVATE_KEY).
-SPARKLE_PUBLIC_KEY = os.environ.get("AILURUS_SPARKLE_PUBLIC_KEY") or \
-    "SXtYux7aYW1uqXfGmQ53urbMglj07Rl8THr8bc+8Wx4="  # env = throwaway key, local tests only
-# Sparkle compares CFBundleVersion: version + commit count, set by build_macos.sh
+# one source for the update feed and its EdDSA public key: ailurus_tone/updater.py
+sys.path.insert(0, str(ROOT))
+from ailurus_tone.updater import FEED_URL, PUBLIC_KEY as SPARKLE_PUBLIC_KEY  # noqa: E402
+# Sparkle/WinSparkle compare this: version + commit count, set by build_macos.sh / build_windows.ps1
 BUILD_VERSION = os.environ.get("AILURUS_BUILD_VERSION") or VERSION
+(ROOT / "build").mkdir(exist_ok=True)
+(ROOT / "build" / "build_info.json").write_text(json.dumps({"version": VERSION, "build": BUILD_VERSION}))
 
-datas = [(str(ROOT / "ailurus_tone" / "web"), "ailurus_tone/web"),
+datas = [(str(ROOT / "build" / "build_info.json"), "ailurus_tone"),
+         (str(ROOT / "ailurus_tone" / "web"), "ailurus_tone/web"),
          (str(ROOT / "ailurus_tone" / "help"), "ailurus_tone/help")]
 datas += collect_data_files("py_mini_racer")          # icudtl.dat must sit next to the package
 binaries = collect_dynamic_libs("py_mini_racer")     # libmini_racer.dylib (V8)
@@ -30,6 +30,7 @@ WINDOWS = sys.platform == "win32"
 if WINDOWS:
     datas += collect_data_files("webview")           # pywebview's WebView2 loader and .NET glue
     hidden += collect_submodules("webview.platforms.edgechromium") + ["clr"]
+    binaries += [(str(ROOT / "build" / "winsparkle" / "WinSparkle.dll"), ".")]   # updater, MIT
 else:
     hidden += ["PyObjCTools.AppHelper"]
 

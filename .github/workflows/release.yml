@@ -1,11 +1,14 @@
-# Builds Ailurus Tone Editor on GitHub's macOS runner and attaches the DMG to the release.
+# Builds Ailurus Tone Editor on GitHub's Windows and macOS runners and attaches the Windows
+# installer and the DMG to the release (PyInstaller cannot cross-compile).
 #
 # Release: bump `version` in pyproject.toml, add docs/release-notes/<version>.md, commit, then
 #   git tag -a v<version> -m "Ailurus Tone Editor <version>" && git push origin main --follow-tags
 # The workflow creates the release if it does not exist yet and uploads
-# Ailurus-Tone-Editor-<version>.dmg, its .sha256 and appcast.xml - the Sparkle update feed
-# the app reads from the latest release, signed with the EdDSA key in the repository secret
-# SPARKLE_ED_PRIVATE_KEY (its public half is SPARKLE_PUBLIC_KEY in packaging/ailurus-tone.spec).
+# Ailurus-Tone-Editor-<version>.dmg, Ailurus-Tone-Editor-<version>-windows-setup.exe, their
+# .sha256 files and appcast.xml - the update feed both apps read from the latest release (Sparkle
+# on macOS, WinSparkle on Windows; one item per platform, tools/appcast_add_windows.py), signed
+# with the EdDSA key in the repository secret SPARKLE_ED_PRIVATE_KEY (public half: PUBLIC_KEY in
+# ailurus_tone/updater.py).
 name: Release
 
 on:
@@ -25,7 +28,41 @@ permissions:
   contents: write
 
 jobs:
+  windows:
+    runs-on: windows-2025
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0 # the build number is the commit count
+
+      # python-rtmidi has no Windows wheel newer than CPython 3.12
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Dependencies and tests
+        run: |
+          python -m venv .venv
+          .venv\Scripts\python -m pip install --quiet -e ".[dev]"
+          .venv\Scripts\python -m pytest -q
+
+      - name: Inno Setup
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+
+      - name: Build
+        run: powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-setup
+          path: dist/Ailurus-Tone-Editor-*-windows-setup.exe*
+
   build:
+    needs: windows
     # macOS 27 + Xcode 27 on Apple Silicon; Xcode's actool compiles the layered icon
     runs-on: xcode-27
     env:
@@ -55,8 +92,13 @@ jobs:
       - name: Build
         run: packaging/build_macos.sh
 
-      - name: Checksum
-        run: cat "dist/Ailurus-Tone-Editor-${TAG#v}.dmg.sha256" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/download-artifact@v7
+        with:
+          name: windows-setup
+          path: dist
+
+      - name: Checksums
+        run: cat dist/Ailurus-Tone-Editor-${TAG#v}*.sha256 >> "$GITHUB_STEP_SUMMARY"
 
       # Sparkle update feed: sign the DMG with our EdDSA key and describe it in
       # appcast.xml (with the release notes rendered to HTML for Sparkle's window).
@@ -78,6 +120,11 @@ jobs:
             --link "https://github.com/${GITHUB_REPOSITORY}" \
             -o dist/appcast.xml build/feed
           grep -q 'sparkle:edSignature=' dist/appcast.xml
+          setup="Ailurus-Tone-Editor-$v-windows-setup.exe"
+          signed="$(printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | build/sparkle/bin/sign_update --ed-key-file - "dist/$setup")"
+          python3 tools/appcast_add_windows.py dist/appcast.xml \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/$setup" "$signed"
+          grep -q 'sparkle:os="windows-x64"' dist/appcast.xml
 
       - name: Keep the DMG as a run artifact (trial run)
         if: github.event_name == 'workflow_dispatch' && !inputs.publish
@@ -86,6 +133,7 @@ jobs:
           name: Ailurus-Tone-Editor-${{ env.TAG }}
           path: |
             dist/Ailurus-Tone-Editor-*.dmg*
+            dist/Ailurus-Tone-Editor-*-windows-setup.exe*
             dist/appcast.xml
 
       - name: Attach to the release
@@ -98,4 +146,6 @@ jobs:
               --notes-file "docs/release-notes/${TAG#v}.md" --verify-tag
           fi
           gh release upload "$TAG" "dist/Ailurus-Tone-Editor-${TAG#v}.dmg" \
-            "dist/Ailurus-Tone-Editor-${TAG#v}.dmg.sha256" dist/appcast.xml --clobber
+            "dist/Ailurus-Tone-Editor-${TAG#v}.dmg.sha256" \
+            "dist/Ailurus-Tone-Editor-${TAG#v}-windows-setup.exe" \
+            "dist/Ailurus-Tone-Editor-${TAG#v}-windows-setup.exe.sha256" dist/appcast.xml --clobber

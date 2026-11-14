@@ -29,9 +29,28 @@ VSVersionInfo(
 )
 "@ | Set-Content -Encoding UTF8 build\version_info.txt
 
+# --- WinSparkle (update framework, MIT), pinned by checksum -----------------------
+$WsVer = "0.9.4"
+$WsSha = "6037df37fc263bd1650a1c4949681a9d40ffe991d01f35892a406cb5d103c976"
+$Ws = "build\winsparkle"
+if (-not (Test-Path "$Ws\WinSparkle.dll")) {
+    New-Item -ItemType Directory -Force build\downloads, $Ws | Out-Null
+    $Zip = "build\downloads\WinSparkle-$WsVer.zip"
+    if (-not (Test-Path $Zip)) {
+        Invoke-WebRequest -UseBasicParsing -OutFile $Zip "https://github.com/vslavik/winsparkle/releases/download/v$WsVer/WinSparkle-$WsVer.zip"
+    }
+    if ((Get-FileHash -Algorithm SHA256 $Zip).Hash.ToLower() -ne $WsSha) { throw "WinSparkle checksum mismatch" }
+    Expand-Archive -Force $Zip build\downloads\winsparkle
+    Copy-Item "build\downloads\winsparkle\WinSparkle-$WsVer\x64\Release\WinSparkle.dll" $Ws
+    Copy-Item "build\downloads\winsparkle\WinSparkle-$WsVer\COPYING" "$Ws\WinSparkle-LICENSE.txt"
+}
+
+# WinSparkle compares this with sparkle:version in the feed (same scheme as CFBundleVersion)
+$env:AILURUS_BUILD_VERSION = "$Version.$Build"
 Remove-Item -Recurse -Force "build\pyinstaller", "dist\Ailurus Tone Editor" -ErrorAction SilentlyContinue
 & $Py -m PyInstaller --noconfirm --clean --workpath build\pyinstaller --distpath dist packaging\ailurus-tone.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
+Copy-Item "$Ws\WinSparkle-LICENSE.txt" "dist\Ailurus Tone Editor\"
 
 $Iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
           "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
