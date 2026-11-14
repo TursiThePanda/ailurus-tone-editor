@@ -16,7 +16,8 @@ from .roland import NotConnected
 from .state import State
 
 WEB = Path(__file__).parent / "web"
-USER_ERRORS = (NotConnected, KeyError, ValueError, TimeoutError, FileNotFoundError, PermissionError, BTSError)
+USER_ERRORS = (NotConnected, KeyError, ValueError, TimeoutError, FileNotFoundError, PermissionError, BTSError,
+               RuntimeError)
 
 
 async def _body(req: Request) -> dict:
@@ -37,12 +38,15 @@ async def _run(fn) -> Response:
     return await anyio.to_thread.run_sync(call)
 
 
-def set_backup_dir(path: str) -> dict:
-    p = Path(path).expanduser()
-    if not p.is_dir():
-        raise FileNotFoundError(f"Folder does not exist: {p}")
+def set_config(b: dict) -> dict:
     cfg = load_config()
-    cfg["backup_dir"] = str(p)
+    if "backup_dir" in b:
+        p = Path(b["backup_dir"]).expanduser()
+        if not p.is_dir():
+            raise FileNotFoundError(f"Folder does not exist: {p}")
+        cfg["backup_dir"] = str(p)
+    if "ai_can_save" in b:
+        cfg["ai_can_save"] = bool(b["ai_can_save"])
     save_config(cfg)
     return cfg
 
@@ -126,7 +130,21 @@ def register(mcp: MCPServer, s: State):
     @route("/api/config", methods=["POST"])
     async def config(req: Request) -> Response:
         b = await _body(req)
-        return await _run(lambda: set_backup_dir(b["backup_dir"]))
+        return await _run(lambda: set_config(b))
+
+    @route("/api/save", methods=["POST"])
+    async def save(req: Request) -> Response:
+        b = await _body(req)
+        return await _run(lambda: s.save_patch(int(b["slot"]), b.get("name")))
+
+    @route("/api/overwritten", methods=["GET"])
+    async def overwritten(_: Request) -> Response:
+        return await _run(lambda: {"items": s.overwritten()})
+
+    @route("/api/putback", methods=["POST"])
+    async def putback(req: Request) -> Response:
+        b = await _body(req)
+        return await _run(lambda: s.put_back(str(b["file"])))
 
     @route("/api/about", methods=["GET"])
     async def about_app(_: Request) -> Response:

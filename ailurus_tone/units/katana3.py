@@ -7,15 +7,19 @@ Facts proven on a KATANA-50 EX Gen 3 on 2026-11-14:
   (edit buffer; what BTS edits), PATCH(n) 0x20n00000... = stored memories, SETUP 0x00000000 =
   patch number (0 = PANEL, 1..8 = A:CH1..B:CH4), PATCH(10) = PREVIEW (never touched).
 - Commands (BTS address_const.js): 7F 00 00 01 editor mode (1 on connect, 0 on leave),
-  7F 00 01 00 PATCH_SELECT [00, n], 7F 00 01 04 PATCH_WRITE (stores the edit buffer; NEVER sent here).
+  7F 00 01 00 PATCH_SELECT [00, n], 7F 00 01 04 PATCH_WRITE [00, n] (stores the edit buffer as
+  memory n; the amp answers with the same DT1), then BTS sends 7F 01 01 09 PREVIEW_MUTE [1] and
+  7F 01 01 0A EXPORT [40, n] and waits for its answer (patch_controller.js writePatch). The name
+  is DT1 at 20 00 00 00 (16 ASCII bytes) before the write.
 - The panel has fixed sections; BOOSTER, MOD, FX, DELAY (+DELAY2) and REVERB each have three
   variations (GREEN/RED/YELLOW). PATCH COLOR says which one is active; MOD = FX(1..3), FX = FX(4..6),
   DELAY2 = DELAY(4..6). FX_DETAIL(n) holds the parameters of every FX type for FX(n).
 - Signal order = BTS chain_config.js: CHAIN (0-8) x pedal FX position x send/return position,
   with the two EQs placed around the amp by their own positions.
 
-Same rule as the GX-10: edits go to the edit buffer only (heard at once, not stored); nothing
-writes a memory. Switching patch discards the edits, as on the amp itself.
+Same rule as the GX-10: edits go to the edit buffer only (heard at once, not stored); only
+save() (unit.py) writes a memory, and never PANEL. Switching patch discards the edits, as on the
+amp itself.
 """
 from __future__ import annotations
 
@@ -32,7 +36,9 @@ PORT_NAME = "KATANA3"
 EDIT_BUFFER = [0x20, 0, 0, 0]
 SETUP = [0, 0, 0, 0]
 PATCH_SELECT = [0x7F, 0, 1, 0]
-PATCH_WRITE = [0x7F, 0, 1, 4]          # only listened for (the player stored on the amp)
+PATCH_WRITE = [0x7F, 0, 1, 4]          # stores the edit buffer; sent only by save()
+PREVIEW_MUTE = [0x7F, 1, 1, 9]
+EXPORT = [0x7F, 1, 1, 0x0A]
 NUM_PATCHES = 9                       # PANEL + A:CH1..A:CH4 + B:CH1..B:CH4
 VARIATIONS = ["GREEN", "RED", "YELLOW"]
 VARIATION_CSS = ["green", "red", "yellow"]
@@ -392,6 +398,36 @@ class Katana(RolandUnit):
         if not 0 <= n < NUM_PATCHES:
             raise ValueError(f"patch must be 0..{NUM_PATCHES - 1} ({', '.join(self.labels)})")
         self.switch_patch(n, lambda: self.port.dt1(PATCH_SELECT, [0, n], pause=0.5), who)
+
+    # ---- saving (unit.save() is the only caller) ---------------------------------
+    def writable_slots(self) -> list[int]:
+        return list(range(1, NUM_PATCHES))         # A:CH1..B:CH4; PANEL is the knobs, not a memory
+
+    def set_name(self, name: str):
+        raw = [ord(c) for c in name.ljust(16)[:16]]
+        self.port.dt1(EDIT_BUFFER, raw, pause=0.1)
+        self.temp["COM"][:16] = raw
+
+    def store(self, n: int):
+        if n not in self.writable_slots():
+            raise ValueError(f"memory must be 1..{NUM_PATCHES - 1}")
+        self.port.dt1_ack(PATCH_WRITE, [0, n], timeout=5.0)
+        self.port.dt1(PREVIEW_MUTE, [1], pause=0.05)
+        self.port.dt1_ack(EXPORT, [0x40, n], timeout=5.0)
+
+    def load_into_current(self, blocks):
+        """Write a backed-up memory into the edit buffer (the blocks the edit buffer is read with;
+        ASSIGN settings are not part of it and stay as they are)."""
+        for b in self.read_blocks:
+            data = blocks.get(b)
+            if data is None or len(data) != self.t.blocks[b][2]:
+                continue
+            off, _, _ = self.t.blocks[b]
+            self.port.dt1(add7(EDIT_BUFFER, from7(off)), data, pause=0.05)
+        time.sleep(0.5)
+
+    def _as_read(self, blocks):
+        return {b: blocks[b] for b in self.read_blocks if b in blocks}
 
     # ---- the amp's own changes (editor mode) -------------------------------------
     def _unsolicited(self, addr, data):

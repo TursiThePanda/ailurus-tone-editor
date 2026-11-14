@@ -6,8 +6,10 @@ and how a parameter is written. The base class owns the connection (editor mode 
 undo/redo history per patch, "edited vs. saved", the diary and the backup interface.
 
 THE SAFETY RULE every unit keeps: live edits go to the unit's current sound (TEMP / edit
-buffer) only. Nothing here ever writes a stored patch, and no unit may add a tool that does
-without the owner's explicit decision.
+buffer) only. A stored patch is written ONLY by save() - the player's Save / Save as in the
+window, or the AI when the player has allowed it in Settings (David's decision, 2026-11-14) -
+and save() first backs up what it overwrites, refuses slots outside writable_slots() and reads
+the slot back to check it.
 
 What the rest of the app reads from a unit (State, REST API, MCP tools, the window):
     kind, title, hint, port_name, readonly, supports_backup, backup_prefix   (class attributes)
@@ -19,9 +21,12 @@ What the rest of the app reads from a unit (State, REST API, MCP tools, the wind
 """
 from __future__ import annotations
 
+import json
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 
 from .history import ActivityLog
 from .locate import BTSProduct
@@ -238,6 +243,119 @@ class RolandUnit:
 
     def set_chain(self, order: list[int], who: str = "you", record: bool = True) -> dict:
         raise ValueError(f"The {self.title} cannot reorder its effects.")
+
+    # ---- saving (the only writes to stored patches) ---------------------------------------
+    def writable_slots(self) -> list[int]:
+        """Patch numbers save() may write. Hidden or internal slots never; a unit narrows this
+        further where a slot is not the player's (the KATANA's PANEL)."""
+        return [n for n, _ in self.backup_slots()]
+
+    def set_name(self, name: str):
+        """Put `name` into the current sound (16 ASCII characters)."""
+        raise NotImplementedError
+
+    def store(self, n: int):
+        """Send the unit's own WRITE command: the current sound becomes stored patch n. Waits for
+        the unit's confirmation."""
+        raise NotImplementedError
+
+    def load_into_current(self, blocks):
+        """Make the current sound equal to `blocks` (as read_slot() returns them)."""
+        raise NotImplementedError
+
+    @staticmethod
+    def clean_name(name: str) -> str:
+        n = "".join(c if 32 <= ord(c) < 127 else "?" for c in str(name)).strip()[:16]
+        if not n:
+            raise ValueError("The patch name is empty.")
+        return n
+
+    def save(self, n: int, name: str | None = None, who: str = "you", backup_dir: str | None = None) -> dict:
+        """Store the current sound as patch n (optionally renamed). What n held before is written
+        to <backup_dir>/Overwritten first; afterwards slot n is read back and compared."""
+        labels = self.slot_labels()
+        if n not in self.writable_slots():
+            raise ValueError(f"{labels[n] if 0 <= n < len(labels) else n} cannot be saved to. "
+                             f"Choose one of: {', '.join(labels[i] for i in self.writable_slots())}")
+        with self.lock:
+            if self.temp is None:
+                raise ValueError(f"The {self.title} is not connected.")
+            old = self.read_slot(n)
+            backup = self._backup_overwritten(n, old, backup_dir)
+            if name is not None and self.clean_name(name) != self.patch_name():
+                self.set_name(self.clean_name(name))
+            self._selecting = n                    # the unit may report the switch to n
+            try:
+                self.store(n)
+                time.sleep(0.5)
+                stored = self.read_saved(n)
+                if stored is None or self.live_masked(stored) != self.live_masked(self.temp):
+                    time.sleep(1.5)                # reads right after a write can be garbage
+                    stored = self.read_saved(n)
+                ok = stored is not None and self.live_masked(stored) == self.live_masked(self.temp)
+                saved_name = self.patch_name()
+                if 0 <= n < len(self.names):
+                    self.names[n] = saved_name
+                self.reload()
+            finally:
+                time.sleep(0.2)
+                self._selecting = None
+            self.log.add(who=who, action="save", patch=labels[n], name=saved_name, device=self.title,
+                         backup=backup)
+        self.on_event("patch", {"current": self.current})
+        if not ok:
+            raise RuntimeError(f"Saved to {labels[n]}, but reading it back differs from the sound that was "
+                               f"sent. The old patch is in {backup}.")
+        return {"slot": labels[n], "name": saved_name, "backup": backup}
+
+    def _backup_overwritten(self, n: int, blocks, backup_dir: str | None) -> str:
+        from .backup import FORMAT, load_config
+        folder = Path(backup_dir or load_config()["backup_dir"]).expanduser() / "Overwritten"
+        folder.mkdir(parents=True, exist_ok=True)
+        label = self.slot_labels()[n]
+        stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        out = folder / f"{self.backup_prefix}_{label.replace(':', '')}_{stamp}.json"
+        k = 2
+        while out.exists():                        # never replace an earlier backup
+            out = folder / f"{self.backup_prefix}_{label.replace(':', '')}_{stamp}_{k}.json"
+            k += 1
+        out.write_text(json.dumps({
+            "format": FORMAT, "device": self.title, "created": datetime.now().isoformat(timespec="seconds"),
+            "bts_version": self.t.bts_version, "block_layout": self.backup_layout(),
+            "patches": [{"slot": n, "label": label, "name": self.slot_name(blocks), "blocks": blocks}],
+        }))
+        return str(out)
+
+    def put_back(self, path: str, who: str = "you", backup_dir: str | None = None) -> dict:
+        """Write a patch from an "Overwritten" backup back into its slot (via the current sound,
+        which is replaced). What the slot holds now is backed up again, so this can be undone too."""
+        data = json.loads(Path(path).read_text())
+        if data.get("device") != self.title or len(data.get("patches", [])) != 1:
+            raise ValueError(f"{Path(path).name} is not a single {self.title} patch backup.")
+        p = data["patches"][0]
+        want = self.live_masked(self._as_read(p["blocks"]))
+        with self.lock:
+            for _attempt in range(2):              # right after a save the unit can miss a write
+                self.load_into_current(p["blocks"])
+                for _ in range(2):                 # ... or answer a read too early
+                    self.temp = self.read_current_sound()
+                    if self.live_masked(self.temp) == want:
+                        return self.save(int(p["slot"]), who=who, backup_dir=backup_dir)
+                    time.sleep(1.5)
+            self.update_edited()
+            raise RuntimeError("The unit did not take the backed-up patch exactly (differs in: "
+                               f"{', '.join(self._differing(self.live_masked(self.temp), want))}); "
+                               "nothing was saved.")
+
+    @staticmethod
+    def _differing(a, b) -> list[str]:
+        if isinstance(a, dict):
+            return [k for k in b if a.get(k) != b[k]]
+        return [str(i) for i, (x, y) in enumerate(zip(a, b, strict=False)) if x != y]
+
+    def _as_read(self, blocks):
+        """A backup's blocks in the shape read_current_sound() returns (units may read fewer blocks)."""
+        return blocks
 
     # ---- backup (see backup.BulkBackup) ---------------------------------------------------------
     def backup_slots(self) -> list[tuple[int, str]]:

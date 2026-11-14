@@ -13,11 +13,13 @@
   <span id="connText" class="muted">Not connected</span>
   <select id="devices" class="devices hidden" aria-label="Unit to edit" data-help="Unit you edit. Units that are not plugged in are greyed out."></select>
   <span id="patchLabel" class="patch"></span>
-  <span id="edited" class="badge warn hidden" data-help="What you hear differs from the patch stored in this slot. Draft 1 cannot save yet.">edited, not saved</span>
+  <span id="edited" class="badge warn hidden" data-help="What you hear differs from the patch stored in this slot. Save keeps it.">edited, not saved</span>
   <span id="readonly" class="badge hidden" data-help="This version only reads this unit: it shows the sound but cannot change it yet.">read only</span>
   <span class="grow"></span>
   <button id="undoBtn" title="Undo (Cmd/Ctrl+Z)">Undo</button>
   <button id="redoBtn" title="Redo (Cmd/Ctrl+Shift+Z)">Redo</button>
+  <button id="saveBtn" data-help="Store what you hear in this patch slot. The old version is backed up first.">Save</button>
+  <button id="saveAsBtn" data-help="Store what you hear in another slot, under a name you choose.">Save as…</button>
   <button id="backupBtn" data-help="Back up every stored patch of this unit into the default backup folder.">Back up</button>
   <button id="exportBtn" data-help="Back up all patches into a folder you choose.">Export to…</button>
   <button id="settingsBtn" aria-label="Settings">Settings</button>
@@ -59,6 +61,11 @@
     <section class="pane" data-pane="general">
       <label class="small muted">Default backup folder</label>
       <div class="row"><input id="backupDir" type="text"><button type="button" id="pickDir">Choose…</button></div>
+      <label class="check"><input id="aiCanSave" type="checkbox"> Let the AI save patches</label>
+      <div class="small muted">Off: the AI only changes what you hear; storing a patch is up to you.</div>
+      <h4>Patches replaced by saving</h4>
+      <div class="small muted">Before every save the old patch is backed up. Put back stores it in its slot again.</div>
+      <div id="overwrittenList" class="small"></div>
       <div id="settingsErr" class="small err"></div>
     </section>
     <section class="pane hidden" data-pane="bts">
@@ -68,6 +75,19 @@
     </section>
     <section class="pane hidden" data-pane="about"><div id="aboutBox" class="small">Loading…</div></section>
     <div class="row end"><button value="cancel">Close</button><button type="button" id="saveSettings">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="saveDlg">
+  <form method="dialog">
+    <h3>Save as</h3>
+    <label class="small muted" for="saveSlot">Slot</label>
+    <div class="row"><select id="saveSlot"></select></div>
+    <label class="small muted" for="saveName">Name</label>
+    <div class="row"><input id="saveName" type="text" maxlength="16"></div>
+    <div id="saveWarn" class="small muted"></div>
+    <div id="saveErr" class="small err"></div>
+    <div class="row end"><button value="cancel">Cancel</button><button type="button" id="saveGo">Save</button></div>
   </form>
 </dialog>
 

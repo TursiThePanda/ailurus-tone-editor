@@ -280,6 +280,46 @@ class State:
         self.backup.start()
         return self.backup.status()
 
+    # ---- saving ---------------------------------------------------------------------------
+    def save_patch(self, slot: int, name: str | None = None, who: str = "you", device: str | None = None) -> dict:
+        d = self.need(device)
+        if d.readonly:
+            raise ValueError(f"Saving the {d.title} is not available.")
+        if who == "ai" and not load_config().get("ai_can_save"):
+            raise PermissionError("Saving patches is off for the AI. The player can allow it in "
+                                  "Settings → General → \"Let the AI save patches\".")
+        r = d.save(int(slot), name=name, who=who)
+        self.bump()
+        return r
+
+    def overwritten_dir(self) -> Path:
+        return Path(load_config()["backup_dir"]).expanduser() / "Overwritten"
+
+    def overwritten(self) -> list[dict]:
+        """Patches save() replaced on the active unit, newest first (for "Put back")."""
+        d = self.need()
+        out = []
+        folder = self.overwritten_dir()
+        for f in sorted(folder.glob(f"{d.backup_prefix}_*.json"), key=lambda f: f.stat().st_mtime, reverse=True):
+            try:
+                j = json.loads(f.read_text())
+                p = j["patches"][0]
+            except (ValueError, KeyError, IndexError, OSError):
+                continue
+            if j.get("device") == d.title:
+                out.append({"file": f.name, "label": p.get("label"), "name": p.get("name"),
+                            "created": j.get("created")})
+        return out[:50]
+
+    def put_back(self, file: str, who: str = "you") -> dict:
+        d = self.need()
+        f = (self.overwritten_dir() / Path(file).name)   # a name from overwritten(), never a path
+        if not f.is_file():
+            raise FileNotFoundError(f"No such backup: {file}")
+        r = d.put_back(str(f), who=who)
+        self.bump()
+        return r
+
     def devices_status(self) -> list[dict]:
         out = [{"id": i, "title": d.title, "connected": self._ready(d), "active": i == self.active,
                 "readonly": d.readonly, "can_backup": d.supports_backup,
@@ -300,10 +340,15 @@ class State:
              "bts_version": d.t.bts_version if d else (any_bts.t.bts_version if any_bts else None),
              "backup": self.backup.status() if self.backup else None,
              "backup_dir": load_config()["backup_dir"],
+             "ai_can_save": bool(load_config().get("ai_can_save")),
              "bts": self.bts_status(),
              "history": self.log.recent(60)}
         if connected:
             s["patch"] = d.summary()
+            labels = d.slot_labels()
+            s["patch"]["can_save"] = not d.readonly and d.current in d.writable_slots()
+            s["writable"] = [{"slot": n, "label": labels[n], "name": d.names[n] if n < len(d.names) else ""}
+                             for n in d.writable_slots()] if not d.readonly else []
         return s
 
     def close(self):

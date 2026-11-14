@@ -31,7 +31,8 @@ INSTRUCTIONS = (
 def _safe(fn) -> dict:
     try:
         return fn()
-    except (NotConnected, KeyError, ValueError, TimeoutError, FileNotFoundError, PermissionError) as e:
+    except (NotConnected, KeyError, ValueError, TimeoutError, FileNotFoundError, PermissionError,
+            RuntimeError) as e:
         return {"error": str(e)}
 
 
@@ -122,6 +123,16 @@ def register(mcp: MCPServer, s: State):
             d.select_patch(d.parse_slot(slot), who="ai")
             return d.summary()
         return _safe(f)
+
+    @mcp.tool()
+    def gx_save(slot: str, name: str | None = None, device: str | None = None) -> dict:
+        """STORE the current sound of the active unit as a patch (GX-10: U01-1..U66-3, KATANA:
+        A:CH1..B:CH4, never PANEL), optionally under a new name (16 ASCII characters). This
+        overwrites what the slot holds, so only do it when the player asked for it in so many
+        words, and say which slot you will overwrite first. Works only when the player has turned
+        on Settings → General → "Let the AI save patches"; otherwise it returns an error. The old
+        patch is backed up first; the player can put it back in the window."""
+        return _safe(lambda: s.save_patch(s.need(device).parse_slot(slot), name, who="ai", device=device))
 
     @mcp.tool()
     def gx_backup_all() -> dict:

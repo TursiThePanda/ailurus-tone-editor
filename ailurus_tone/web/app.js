@@ -44,6 +44,9 @@ function renderTop() {
   $("readonly").classList.toggle("hidden", !(c && state.patch.readonly));
   $("undoBtn").disabled = !(c && state.patch.can_undo);
   $("redoBtn").disabled = !(c && state.patch.can_redo);
+  const busy = !!state?.backup?.running;
+  $("saveBtn").disabled = !(c && state.patch.edited && state.patch.can_save) || busy;
+  $("saveAsBtn").disabled = !(c && (state.writable || []).length) || busy;
   for (const id of ["backupBtn", "exportBtn"]) $(id).disabled = !c || !!state.backup?.running || !state.can_backup;
   renderDevices();
   // a connection problem stays shown until a unit is connected; a flash() message keeps its own timer
@@ -119,6 +122,7 @@ const WHO_HELP = { you: "You, in this window", ai: "An AI through MCP", unit: "A
 function describeEvent(e) {
   const dev = e.device && e.device !== state?.device_title ? `<span class="act">${esc(e.device)}</span> ` : "";
   if (e.action === "patch") return `${dev}→ ${esc(e.patch)} ${esc(e.name)}`;
+  if (e.action === "save") return `${dev}<span class="act">saved</span> ${esc(e.patch)} ${esc(e.name)}`;
   if (e.param === "CHAIN") {
     const verb = e.action === "set" ? "" : `<span class="act">${e.action}</span> `;
     return `${verb}${esc(e.display)}`;
@@ -265,8 +269,59 @@ $("exportBtn").onclick = async () => {
   try { localStorage.setItem("lastExportDir", dir); } catch (e) {}
   try { await api("/api/backup", { folder: dir }); } catch (e) { flash(e.message); }
 };
+// ---- saving ------------------------------------------------------------------------
+function slotText(w) { return `${w.label}  ${w.name || "(empty)"}`; }
+async function doSave(slot, name) {
+  await api("/api/save", name == null ? { slot } : { slot, name });
+  lastVersion = -1; patches = [];
+}
+$("saveBtn").onclick = async () => {
+  const p = state.patch;
+  if (!confirm(`Store what you hear as ${p.label} "${p.name}"? The patch stored there now is backed up first.`)) return;
+  try { await doSave(p.current); flash(`Saved ${p.label} ${p.name}.`); } catch (e) { flash(e.message); }
+};
+function saveWarn() {
+  const w = (state.writable || []).find((x) => x.slot === +$("saveSlot").value);
+  $("saveWarn").textContent = w ? `Overwrites ${slotText(w)} (backed up first).` : "";
+}
+$("saveAsBtn").onclick = () => {
+  const ws = state.writable || [];
+  $("saveSlot").innerHTML = ws.map((w) => `<option value="${w.slot}">${esc(slotText(w))}</option>`).join("");
+  if (ws.some((w) => w.slot === state.patch.current)) $("saveSlot").value = state.patch.current;
+  $("saveName").value = state.patch.name || ""; $("saveErr").textContent = ""; saveWarn();
+  $("saveDlg").showModal(); $("saveName").focus();
+};
+$("saveSlot").onchange = saveWarn;
+$("saveGo").onclick = async () => {
+  const slot = +$("saveSlot").value, name = $("saveName").value.trim();
+  if (!name) { $("saveErr").textContent = "Give the patch a name."; return; }
+  $("saveGo").disabled = true;
+  try { await doSave(slot, name); $("saveDlg").close(); flash("Saved."); }
+  catch (e) { $("saveErr").textContent = e.message; }
+  finally { $("saveGo").disabled = false; }
+};
+async function loadOverwritten() {
+  const box = $("overwrittenList");
+  if (!state?.connected) { box.innerHTML = '<span class="muted">Connect a unit to see its replaced patches.</span>'; return; }
+  try {
+    const { items } = await api("/api/overwritten");
+    box.innerHTML = items.length ? items.map((o) => `<div class="orow"><span class="grow">${esc(o.label)} ${esc(o.name)}
+      <span class="muted">· replaced ${esc((o.created || "").replace("T", " ").slice(0, 16))}</span></span>
+      <button type="button" data-file="${esc(o.file)}">Put back</button></div>`).join("")
+      : '<span class="muted">None yet.</span>';
+    box.querySelectorAll("button[data-file]").forEach((b) => (b.onclick = async () => {
+      const o = items.find((x) => x.file === b.dataset.file);
+      if (!confirm(`Put "${o.name}" back into ${o.label}? What you hear now is replaced by it, and what ${o.label} holds now is backed up first.`)) return;
+      b.disabled = true;
+      try { await api("/api/putback", { file: o.file }); lastVersion = -1; patches = []; loadOverwritten(); }
+      catch (e) { $("settingsErr").textContent = e.message; b.disabled = false; }
+    }));
+  } catch (e) { box.textContent = e.message; }
+}
+
 $("settingsBtn").onclick = () => {
   $("backupDir").value = state?.backup_dir || ""; $("settingsErr").textContent = "";
+  $("aiCanSave").checked = !!state?.ai_can_save; loadOverwritten();
   renderBts(state?.bts || []); showTab("general"); $("settings").showModal();
 };
 function showTab(name) {
@@ -387,7 +442,10 @@ function pickInstaller(row, id) {
 }
 $("pickDir").onclick = async () => { const d = await pickFolder($("backupDir").value); if (d) $("backupDir").value = d; };
 $("saveSettings").onclick = async () => {
-  try { await api("/api/config", { backup_dir: $("backupDir").value }); $("settings").close(); }
+  try {
+    await api("/api/config", { backup_dir: $("backupDir").value, ai_can_save: $("aiCanSave").checked });
+    $("settings").close(); lastVersion = -1;
+  }
   catch (e) { $("settingsErr").textContent = e.message; }
 };
 

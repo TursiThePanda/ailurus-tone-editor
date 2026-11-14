@@ -93,22 +93,27 @@ Releases are built by `.github/workflows/release.yml` when a `v*` tag is pushed.
 Streamable HTTP at `http://127.0.0.1:8710/mcp` while the app runs. Tools: `gx_status`,
 `gx_list_patches`, `gx_read_patch`, `gx_set`, `gx_switch`, `gx_undo`, `gx_redo`,
 `gx_select_patch`, `gx_select_device`, `gx_backup_all`, `gx_set_chain` (reorder a straight chain), `gx_history`
-(what the player, the unit and the AI changed, including undo; kept in `<config>/history/*.jsonl`).
+(what the player, the unit and the AI changed, including undo; kept in `<config>/history/*.jsonl`),
+`gx_save` (store the current sound in a slot; refused unless the player turned on
+Settings → General → "Let the AI save patches", off by default).
 
 Claude Code: `claude mcp add --transport http ailurus-tone http://127.0.0.1:8710/mcp`
 
-## What draft 1 does and does not do
+## What it does and does not do
 
-- Live edits change the **current sound** (the unit's temp patch) only. No user slot is
-  ever written; switching patch discards the edits.
+- Live edits change the **current sound** (the unit's temp patch) only; switching patch
+  discards the edits. A stored patch is written only by **Save** / **Save as…** (or the AI's
+  `gx_save`, when allowed). Before every save the patch being replaced is backed up to
+  `<backup folder>/Overwritten`, and Settings → General → "Put back" stores it again. The
+  GX-10's hidden slots and the KATANA's PANEL are never written.
 - Undo/Redo (Cmd/Ctrl+Z), one knob drag = one step; a history of every change by you, the AI
   or a knob on the unit, which the AI can read.
 - Drag effects to reorder a straight chain.
 - Bulk backup of all 198 user patches (U01-1..U66-3) to the default folder or a chosen one.
-- KATANA Gen 3: live edits of every block (edit buffer only, memories are never written),
+- KATANA Gen 3: live edits of every block (edit buffer), Save to A:CH1..B:CH4,
   patch switching (PANEL, A:CH1..B:CH4), signal order shown as on the amp, backup of all
   9 memories. The chain is set with the CHAIN parameter, not by dragging.
-- Not yet: Save / Save as / Restore, `.tsl` import/export, Compare,
+- Not yet: restoring a bulk backup, `.tsl` import/export, Compare,
   notarized build, MCP bearer token, divider/splitter branch layout.
 
 ## Layout

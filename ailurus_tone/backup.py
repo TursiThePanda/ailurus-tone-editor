@@ -26,7 +26,8 @@ def config_dir() -> Path:
     return d
 
 
-DEFAULTS = {"backup_dir": str(Path.home() / "Documents" / "Ailurus Tone Editor" / "Backups")}
+DEFAULTS = {"backup_dir": str(Path.home() / "Documents" / "Ailurus Tone Editor" / "Backups"),
+            "ai_can_save": False}         # MCP gx_save works only when the player turns this on
 
 
 def load_config() -> dict:

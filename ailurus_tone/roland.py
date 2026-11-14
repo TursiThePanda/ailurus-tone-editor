@@ -171,6 +171,29 @@ class RolandPort:
             finally:
                 self._collecting = False
 
+    def dt1_ack(self, addr, data, timeout: float = 3.0) -> list[int]:
+        """Send a command and wait until the unit answers with a DT1 to the same address (BTS's
+        waitForDT1Reply: the unit confirms a WRITE this way). Returns the reply's data."""
+        a, d = list(addr), list(data)
+        with self.lock:
+            while not self._inbox.empty():
+                self._unsolicited.put(self._inbox.get_nowait())
+            self._collecting = True
+            try:
+                self._send(self.header + [0x12] + a + d + [checksum(a + d), 0xF7])
+                t0 = time.time()
+                while time.time() - t0 < timeout:
+                    try:
+                        raddr, rdata = self._inbox.get(timeout=0.05)
+                    except queue.Empty:
+                        continue
+                    if list(raddr) == a:
+                        return rdata
+                    self._unsolicited.put((raddr, rdata))
+                raise TimeoutError(f"the unit did not confirm {hex_addr(a)}")
+            finally:
+                self._collecting = False
+
     def dt1(self, addr, data, pause: float = 0.02):
         a, d = list(addr), list(data)
         with self.lock:

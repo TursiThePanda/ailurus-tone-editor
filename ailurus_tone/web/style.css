@@ -23,6 +23,7 @@ input[type=search], input[type=text], select { font: inherit; color: var(--text)
   border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
 .bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--panel);
   border-bottom: 1px solid var(--line); }
+.bar button { white-space: nowrap; }
 .grow { flex: 1; }
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
@@ -88,6 +89,10 @@ dialog { width: 560px; }
 dialog h4 { margin: 18px 0 4px; }
 dialog .bts { margin: 10px 0; }
 dialog .bts .path { word-break: break-all; }
+dialog .check { display: flex; gap: 6px; align-items: center; margin-top: 14px; }
+dialog select { flex: 1; }
+.orow { display: flex; gap: 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.orow .grow { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* effect colour families, taken from BOSS TONE STUDIO's own table ("color" per effect) */
 .c-red { --fx: #d94a3d; } .c-orange { --fx: #e8853a; } .c-yellow { --fx: #d9b42c; }

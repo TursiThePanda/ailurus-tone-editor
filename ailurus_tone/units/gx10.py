@@ -4,8 +4,12 @@ Facts proven on the unit 2026-11-06..12:
 - 198 visible user patches U01-1..U66-3; internal slots 199/200 are hidden -> never touched.
 - fxItem: writing byte 0 (type) resets the params, so type/switch and params are separate writes.
 - Reads right after a write burst can return garbage -> pause and re-read.
+- WRITE (BTS): DT1 7F 00 01 04 = [n >> 7, n & 0x7F] stores TEMP as user patch n; the unit
+  answers with the same DT1 and is then on patch n. Sent only by save() (unit.py).
 """
 from __future__ import annotations
+
+import time
 
 from ..roland import NotConnected, add7, from7
 from ..rolandbts import decode, encode
@@ -20,6 +24,7 @@ USER_BASE = [0x20, 0, 0, 0]
 NAMES_BASE = [0x50, 0, 0, 0]
 SLOT_STRIDE = from7([6, 0, 0])
 CURRENT_PATCH = [0, 0, 0, 0]
+PATCH_WRITE = [0x7F, 0, 1, 4]
 CHAIN_EDIT = [0, 0x20, 0, 3]    # SetupTemp ChainEditTrigger: BTS sends 1 before and 0 after a chain write
 CHAIN_AT, CHAIN_LEN = 0x0C, 50  # efct: ChainTopItem + ChainNextItem0..48, stored value+1, 0 = end
 BRANCH_TYPES = {"DIVIDER", "SPLITTER", "MIXER"}
@@ -331,6 +336,41 @@ class GX10(RolandUnit):
         if not 0 <= n < VISIBLE_USER:
             raise ValueError(f"patch must be 0..{VISIBLE_USER - 1}")
         self.switch_patch(n, lambda: self.port.dt1(CURRENT_PATCH, nibbles4(n), pause=0.6), who)
+
+    # ---- saving (unit.save() is the only caller) -------------------------------
+    def writable_slots(self) -> list[int]:
+        return list(range(VISIBLE_USER))           # never the hidden slots 199/200
+
+    def set_name(self, name: str):
+        raw = [ord(c) for c in name.ljust(16)[:16]]
+        self.port.dt1(TEMP, raw, pause=0.1)
+        self.temp[0][:16] = raw
+
+    def store(self, n: int):
+        if n not in self.writable_slots():
+            raise ValueError(f"patch must be 0..{VISIBLE_USER - 1}")
+        self.port.dt1_ack(PATCH_WRITE, [n >> 7, n & 0x7F], timeout=5.0)
+
+    def load_into_current(self, blocks):
+        """Write a whole patch into TEMP. An effect block goes in two steps (type + switch,
+        then the parameters): writing the type byte resets that effect's parameters."""
+        for (bname, off, size), data in zip(BLOCKS, blocks, strict=True):
+            # led = OnOffState: the unit computes it from the effect switches when it WRITEs
+            if bname == "led" or len(data) != size:
+                continue
+            base = add7(TEMP, from7(off))
+            if bname.startswith("fx"):
+                self.port.dt1(base, data[:2], pause=0.4)
+                self.port.dt1(add7(base, 2), data[2:], pause=0.1)
+            elif bname == "efct":
+                self.port.dt1(CHAIN_EDIT, [1])
+                try:
+                    self.port.dt1(base, data, pause=0.1)
+                finally:
+                    self.port.dt1(CHAIN_EDIT, [0])
+            else:
+                self.port.dt1(base, data, pause=0.1)
+        time.sleep(0.5)
 
     # ---- unit panel changes --------------------------------------------------
     def _unsolicited(self, addr, data):
