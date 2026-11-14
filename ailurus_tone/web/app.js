@@ -13,7 +13,7 @@ async function api(path, body) {
   return j;
 }
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
-function flash(msg) { const m = $("message"); m.textContent = msg; m.classList.remove("hidden"); clearTimeout(flash.t); flash.t = setTimeout(() => m.classList.add("hidden"), 6000); }
+function flash(msg) { const m = $("message"); delete m.dataset.conn; m.textContent = msg; m.classList.remove("hidden"); clearTimeout(flash.t); flash.t = setTimeout(() => m.classList.add("hidden"), 6000); }
 function helpFor(kind, key) { return (HELP[LANG]?.[kind]?.[key]) || (HELP.en?.[kind]?.[key]) || ""; }
 
 // ---- tooltips: short, after a delay, also on keyboard focus ------------------
@@ -46,8 +46,10 @@ function renderTop() {
   $("redoBtn").disabled = !(c && state.patch.can_redo);
   for (const id of ["backupBtn", "exportBtn"]) $(id).disabled = !c || !!state.backup?.running || !state.can_backup;
   renderDevices();
-  if (state?.error && !c) { $("message").textContent = state.error; $("message").classList.remove("hidden"); }
-  else if (c && $("message").textContent === state?.error) $("message").classList.add("hidden");
+  // a connection problem stays shown until a unit is connected; a flash() message keeps its own timer
+  const m = $("message");
+  if (state?.error && !c) { m.textContent = state.error; m.classList.remove("hidden"); m.dataset.conn = "1"; }
+  else if (c && m.dataset.conn) { m.classList.add("hidden"); delete m.dataset.conn; }
   const b = state?.backup;
   $("backupState").innerHTML = !b ? "" : b.running ? `Backing up… ${b.done}/${b.total}`
     : b.error ? `<span class="err">Backup failed: ${esc(b.error)}</span>`
