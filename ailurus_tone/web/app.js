@@ -2,7 +2,7 @@
 const $ = (id) => document.getElementById(id);
 const LANG = (navigator.language || "en").toLowerCase().startsWith("cs") ? "cs" : "en";
 let HELP = {}, state = null, patches = [], patchesFor = null, selFx = null, fxData = null, lastVersion = -1;
-const EMPTY = "Plug in the GX-10 or the KATANA and quit BOSS TONE STUDIO.";
+const EMPTY = "Plug in a supported unit and quit BOSS TONE STUDIO.";
 let dragging = null; // {fx, param, old}
 
 async function api(path, body) {
@@ -54,15 +54,16 @@ function renderTop() {
     : b.path ? `Backup saved (${b.seconds} s): ${esc(b.path)}` : "";
 }
 
-// one button per set-up unit; shown once there is a choice to make (or a unit is missing its BTS)
+// dropdown of the set-up units; shown once there is a choice to make
 function renderDevices() {
   const list = (state?.devices || []).filter((d) => !d.missing);
   const box = $("devices");
-  const html = list.length < 2 ? "" : list.map((d) => `<button class="dev ${d.active ? "sel" : ""} ${d.connected ? "" : "off"}" data-dev="${esc(d.id)}"
-      role="tab" aria-selected="${d.active}" ${d.connected ? "" : "disabled"}
-      data-help="${esc(d.connected ? `Edit the ${d.title}${d.readonly ? " (read only for now)" : ""}.` : d.error || `${d.title} is not connected.`)}">
-      <span class="conn ${d.connected ? "on" : "off"}"></span>${esc(d.title)}</button>`).join("");
-  if (box.dataset.html !== html) { box.innerHTML = html; box.dataset.html = html; }  // keep the buttons alive between polls
+  const html = list.map((d) => `<option value="${esc(d.id)}" ${d.active ? "selected" : ""} ${d.connected ? "" : "disabled"}
+      title="${esc(d.connected ? `Edit the ${d.title}${d.readonly ? " (read only for now)" : ""}.` : d.error || `${d.title} is not connected. ${d.hint || ""}`.trim())}">
+      ${esc(d.title)}${d.connected ? "" : " (not connected)"}</option>`).join("");
+  box.classList.toggle("hidden", list.length < 2);
+  // rebuild only on a real change, so an open dropdown is not closed by the next poll
+  if (box.dataset.html !== html) { box.innerHTML = html; box.dataset.html = html; }
 }
 
 function renderPatches() {
@@ -171,10 +172,14 @@ $("chain").addEventListener("click", (e) => {
 });
 $("chain").addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.closest(".blk")?.click(); });
 $("search").addEventListener("input", renderPatches);
-$("devices").addEventListener("click", async (e) => {
-  const b = e.target.closest(".dev"); if (!b || b.classList.contains("sel")) return;
-  if (state?.patch?.edited && !confirm("The other unit keeps its sound; this one keeps your unsaved changes too. Switch the view?")) return;
-  try { await api("/api/device", { id: b.dataset.dev }); selFx = null; patches = []; lastVersion = -1; } catch (err) { flash(err.message); }
+$("devices").addEventListener("change", async (e) => {
+  const sel = e.target, prev = state?.device;
+  if (sel.value === prev) return;
+  if (state?.patch?.edited && !confirm("The other unit keeps its sound; this one keeps your unsaved changes too. Switch the view?")) {
+    sel.value = prev; return;
+  }
+  try { await api("/api/device", { id: sel.value }); selFx = null; patches = []; lastVersion = -1; }
+  catch (err) { sel.value = prev; flash(err.message); }
 });
 $("patchList").addEventListener("click", async (e) => {
   const r = e.target.closest(".prow"); if (!r) return;

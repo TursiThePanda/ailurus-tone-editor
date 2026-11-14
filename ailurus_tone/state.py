@@ -24,13 +24,17 @@ from .roland import NotConnected, RolandPort
 
 HELP_DIR = Path(__file__).parent / "help"
 
-# id -> (title, how to build it); order = preference for the first active unit
+# id -> (title, how to build it, how to connect it); order = preference for the first active unit.
+# The hint is shown only next to that unit (switcher tooltip, a tool that names it); the main
+# message stays generic so it holds for any number of supported units.
 PROFILES = {
     "gx10": ("GX-10", lambda log, bump: GX10(Tables(find_bts_root()), on_event=bump, log=log),
-             "GX-10 not found. Plug it straight into the computer (not a hub)."),
+             "Plug it straight into the computer, not through a hub."),
     "katana3": ("KATANA Gen 3", lambda log, bump: Katana(KatanaTables(find_katana_root()), on_event=bump, log=log),
-                "KATANA not found. Plug it in over USB and install the KATANA3 Driver."),
+                "Plug it in over USB; it needs Roland's KATANA3 Driver."),
 }
+NO_UNIT = "No unit connected. Plug in a supported unit over USB and quit BOSS TONE STUDIO."
+NO_PROFILE = "No supported unit is set up: install BOSS TONE STUDIO for your unit (it does not need to run)."
 
 
 def bts_running() -> bool:
@@ -76,12 +80,17 @@ class State:
 
     @property
     def error(self) -> str | None:
+        """Why nothing can be edited. A unit's own error is a real problem (BTS running, a failed
+        connection); a unit that is simply not plugged in has none, so the message stays generic."""
+        if not self.devices:
+            return NO_PROFILE
         d = self.devices.get(self.active) if self.active else None
-        if len(self.devices) > 1 and not any(self._ready(x) for x in self.devices.values()):
-            return "No unit connected. " + " ".join(x.error for x in self.devices.values() if x.error)
-        if d:
-            return d.error
-        return next(iter(self.missing.values()), None) or "No supported unit is set up."
+        if self._ready(d):
+            return None
+        if any(self._ready(x) for x in self.devices.values()):
+            return None
+        problems = [x.error for x in self.devices.values() if x.error]
+        return problems[0] if problems else NO_UNIT
 
     @error.setter
     def error(self, msg: str | None):
@@ -113,17 +122,17 @@ class State:
         avail = RolandPort.available(d.port_name)
         if d.connected and not avail:
             d.port.close()
-            d.error = f"{d.title} was unplugged"
+            d.error = None
             self.bump()
         elif not d.connected and avail:
             if bts_running():
-                d.error = f"Quit BOSS TONE STUDIO first: it polls the {d.title} and corrupts reads"
+                d.error = "Quit BOSS TONE STUDIO first: it polls the unit and corrupts reads"
             else:
                 d.connect()
                 d.error = None
             self.bump()
         elif not avail:
-            d.error = PROFILES[d.kind][2]
+            d.error = None
         elif d.connected and d.temp is not None:
             d.poll()
 
@@ -163,8 +172,12 @@ class State:
     def need(self, did: str | None = None):
         d = self.devices.get(self.resolve(did))
         if not self._ready(d):
-            raise NotConnected(d.error or f"{d.title} is not connected")
+            raise NotConnected(d.error or f"{d.title} is not connected. {self.hint(d)}")
         return d
+
+    @staticmethod
+    def hint(d) -> str:
+        return PROFILES.get(d.kind, ("", None, ""))[2]
 
     def start_backup(self, folder: str | None = None) -> dict:
         if self.backup and self.backup.running:
@@ -179,7 +192,7 @@ class State:
     def devices_status(self) -> list[dict]:
         out = [{"id": i, "title": d.title, "connected": self._ready(d), "active": i == self.active,
                 "readonly": d.readonly, "can_backup": d.supports_backup,
-                "error": None if self._ready(d) else d.error}
+                "error": None if self._ready(d) else d.error, "hint": self.hint(d)}
                for i, d in self.devices.items()]
         out += [{"id": i, "title": PROFILES[i][0], "connected": False, "active": False,
                  "readonly": True, "error": msg, "missing": True} for i, msg in self.missing.items()]

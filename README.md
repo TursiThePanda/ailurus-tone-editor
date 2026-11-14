@@ -27,7 +27,7 @@ Plug the GX-10 straight into the computer (USB MIDI does not work through a hub)
 BOSS TONE STUDIO. The app connects by itself. The KATANA Gen 3 needs Roland's *KATANA3
 Driver* (the older KATANA driver gives no MIDI port).
 
-With several units plugged in, the switcher at the top of the window picks the one you
+With several units plugged in, the unit menu at the top of the window picks the one you
 edit; MCP tools take an optional `device` argument, and `gx_select_device` changes the
 active one.
 
