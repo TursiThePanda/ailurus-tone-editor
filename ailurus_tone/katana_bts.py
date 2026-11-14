@@ -12,22 +12,20 @@ Sources inside its html/ folder:
 from __future__ import annotations
 
 import json
-import os
 import re
-import sys
 import threading
 from html.parser import HTMLParser
 from pathlib import Path
 
 from py_mini_racer import MiniRacer
 
-from .bts import BTSError
+from .locate import BTSError, BTSProduct, locate
 
-CANDIDATES = {
-    "darwin": ["/Applications/BOSS/KATANA Gen 3/BOSS TONE STUDIO for KATANA Gen 3.app/Contents/Resources/html"],
-    "win32": [],
-    "linux": [],
-}
+KATANA3_BTS = BTSProduct(
+    unit="KATANA Gen3", app="BOSS TONE STUDIO for KATANA Gen 3", env="KATANA3_BTS_HTML",
+    setting="js/config/product_setting.js",
+    required=("js/config/address_map.js", "js/config/resource.js", "export/item.json", "export/layout.div"),
+    mac=("/Applications/BOSS/KATANA Gen 3/BOSS TONE STUDIO for KATANA Gen 3.app/Contents/Resources/html",))
 
 # size tokens in address_map.js -> (kind, byte count); kinds as in bts.layout()
 SIZES = {"INTEGER1x7": ("byte", 1), "INTEGER2x4": ("nibbles", 2), "INTEGER2x7": ("byte7", 2),
@@ -39,15 +37,9 @@ CHILD = re.compile(r"\{\s*addr:\s*0x([0-9A-Fa-f]{8}),\s*size:\s*0,\s*child:\s*(\
 TABLE = re.compile(r"var\s+(\w+)\s*=\s*\[(.*?)\n\s*\];", re.S)
 
 
-def find_katana_root(override: str | None = None) -> Path:
-    paths = [override] if override else []
-    paths += [os.environ.get("KATANA3_BTS_HTML", "")] + CANDIDATES.get(sys.platform, [])
-    for p in paths:
-        root = Path(p) if p else None
-        if root and (root / "js" / "config" / "address_map.js").is_file() and (root / "export" / "item.json").is_file():
-            return root
-    raise BTSError("BOSS TONE STUDIO for KATANA Gen 3 was not found. Install it from boss.info "
-                   "(it does not need to run), or set KATANA3_BTS_HTML to its html folder.")
+def find_katana_root(chosen: str | None = None) -> Path:
+    """The html folder of BOSS TONE STUDIO for KATANA Gen 3 (see locate.py for where we look)."""
+    return locate(KATANA3_BTS, chosen)
 
 
 def addr_bytes(hex8: str) -> list[int]:

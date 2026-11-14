@@ -263,7 +263,36 @@ $("exportBtn").onclick = async () => {
   try { localStorage.setItem("lastExportDir", dir); } catch (e) {}
   try { await api("/api/backup", { folder: dir }); } catch (e) { flash(e.message); }
 };
-$("settingsBtn").onclick = () => { $("backupDir").value = state?.backup_dir || ""; $("settingsErr").textContent = ""; $("settings").showModal(); };
+$("settingsBtn").onclick = () => {
+  $("backupDir").value = state?.backup_dir || ""; $("settingsErr").textContent = "";
+  renderBts(state?.bts || []); $("settings").showModal();
+};
+
+// one row per supported unit: where its BOSS TONE STUDIO is (chosen folder or found by itself)
+function renderBts(list, errors = {}) {
+  $("btsRows").innerHTML = list.map((b) => {
+    const st = errors[b.id] ? `<span class="err">${esc(errors[b.id])}</span>`
+      : b.found ? `Found, version ${esc(b.version || "?")}: <span class="path">${esc(b.found)}</span>`
+      : `<span class="err">${esc(b.error || "Not found.")}</span>`;
+    return `<div class="bts" data-id="${esc(b.id)}">
+      <div class="small"><b>${esc(b.title)}</b></div>
+      <div class="row"><input type="text" readonly value="${esc(b.chosen)}" placeholder="Automatic (usual install place)">
+        <button type="button" data-act="pick">Choose…</button>
+        <button type="button" data-act="auto" ${b.chosen ? "" : "disabled"}>Automatic</button></div>
+      <div class="small muted">${st}</div></div>`;
+  }).join("");
+}
+$("btsRows").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button[data-act]"); if (!btn) return;
+  const row = btn.closest(".bts"), id = row.dataset.id;
+  let path = "";
+  if (btn.dataset.act === "pick") {
+    path = await pickFolder(row.querySelector("input").value || ""); if (!path) return;
+  }
+  btn.disabled = true; row.querySelector(".muted").textContent = "Loading tables…";
+  try { const r = await api("/api/bts", { id, path }); state.bts = r.bts; renderBts(r.bts); lastVersion = -1; }
+  catch (err) { renderBts(state?.bts || [], { [id]: err.message }); }
+});
 $("pickDir").onclick = async () => { const d = await pickFolder($("backupDir").value); if (d) $("backupDir").value = d; };
 $("saveSettings").onclick = async () => {
   try { await api("/api/config", { backup_dir: $("backupDir").value }); $("settings").close(); }

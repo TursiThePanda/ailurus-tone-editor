@@ -14,7 +14,7 @@ import threading
 import time
 from pathlib import Path
 
-from .backup import BulkBackup, config_dir, load_config
+from .backup import BulkBackup, config_dir, load_config, save_config
 from .bts import BTSError, Tables, find_bts_root
 from .device import GX10
 from .history import ActivityLog
@@ -27,14 +27,17 @@ HELP_DIR = Path(__file__).parent / "help"
 # id -> (title, how to build it, how to connect it); order = preference for the first active unit.
 # The hint is shown only next to that unit (switcher tooltip, a tool that names it); the main
 # message stays generic so it holds for any number of supported units.
+# The builder takes the BTS folder chosen in Settings (None = look in the usual places).
 PROFILES = {
-    "gx10": ("GX-10", lambda log, bump: GX10(Tables(find_bts_root()), on_event=bump, log=log),
+    "gx10": ("GX-10", lambda bts, log, bump: GX10(Tables(find_bts_root(bts)), on_event=bump, log=log),
              "Plug it straight into the computer, not through a hub."),
-    "katana3": ("KATANA Gen 3", lambda log, bump: Katana(KatanaTables(find_katana_root()), on_event=bump, log=log),
+    "katana3": ("KATANA Gen 3",
+                lambda bts, log, bump: Katana(KatanaTables(find_katana_root(bts)), on_event=bump, log=log),
                 "Plug it in over USB; it needs Roland's KATANA3 Driver."),
 }
 NO_UNIT = "No unit connected. Plug in a supported unit over USB and quit BOSS TONE STUDIO."
-NO_PROFILE = "No supported unit is set up: install BOSS TONE STUDIO for your unit (it does not need to run)."
+NO_PROFILE = ("BOSS TONE STUDIO was not found for any supported unit. Install it (it does not need to run), "
+              "or choose its folder in Settings.")
 
 
 def bts_running() -> bool:
@@ -64,14 +67,20 @@ class State:
         self.backup: BulkBackup | None = None
         self.help = load_help()
         self.log = ActivityLog(config_dir() / "history")
-        for did, (_, make, _) in PROFILES.items():
+        self.lock = threading.RLock()     # the watcher vs. replacing a unit after a BTS folder change
+        self.only = only
+        chosen = load_config().get("bts_paths", {})
+        for did in PROFILES:
             if only and did not in only:
                 continue
             try:
-                self.devices[did] = make(self.log, self.bump)
+                self.devices[did] = self._make(did, chosen.get(did))
             except BTSError as e:
                 self.missing[did] = str(e)
         self.active = next(iter(self.devices), None)
+
+    def _make(self, did: str, bts: str | None):
+        return PROFILES[did][1](bts, self.log, self.bump)
 
     # ---- compatibility: the GX-10 object, used by demo mode -------------------
     @property
@@ -108,14 +117,15 @@ class State:
         """Connect each unit when it appears, drop it when it goes away, refuse while BTS runs."""
         while True:
             self.log.flush_stale()
-            for d in list(self.devices.values()):
-                try:
-                    self._watch_once(d)
-                except Exception as e:
-                    d.error = f"Connection failed: {e}"
-                    d.port.close()
-                    self.bump()
-            self._auto_select()
+            with self.lock:
+                for d in list(self.devices.values()):
+                    try:
+                        self._watch_once(d)
+                    except Exception as e:
+                        d.error = f"Connection failed: {e}"
+                        d.port.close()
+                        self.bump()
+                self._auto_select()
             time.sleep(2)
 
     def _watch_once(self, d):
@@ -179,6 +189,58 @@ class State:
     def hint(d) -> str:
         return PROFILES.get(d.kind, ("", None, ""))[2]
 
+    # ---- where each unit's BOSS TONE STUDIO is --------------------------------
+    def set_bts_path(self, did: str, path: str | None) -> dict:
+        """Use the BTS in `path` for unit `did` (None or "" = look in the usual places again).
+        The tables are loaded first; only if that works is the unit replaced and the choice saved."""
+        if did not in PROFILES or (self.only and did not in self.only):
+            raise ValueError(f"unknown unit '{did}'")
+        path = (path or "").strip() or None
+        new = self._make(did, path)                     # BTSError -> nothing changes
+        with self.lock:
+            old = self.devices.get(did)
+            if old:
+                if old.connected:
+                    old.disconnect()
+                try:
+                    old.t.close()
+                except Exception:
+                    pass
+            self.devices = {i: (new if i == did else d) for i, d in self._ordered(did, new)}
+            self.missing.pop(did, None)
+            if not self.active:
+                self.active = did
+            cfg = load_config()
+            paths = cfg.setdefault("bts_paths", {})
+            if path:
+                paths[did] = path
+            else:
+                paths.pop(did, None)
+            save_config(cfg)
+            self.bump()
+        return {"bts": self.bts_status()}
+
+    def _ordered(self, did, new):
+        """Keep PROFILES order, so the unit menu does not reshuffle."""
+        for i in PROFILES:
+            if i == did:
+                yield i, new
+            elif i in self.devices:
+                yield i, self.devices[i]
+
+    def bts_status(self) -> list[dict]:
+        chosen = load_config().get("bts_paths", {})
+        out = []
+        for did, (title, _, _) in PROFILES.items():
+            if self.only and did not in self.only:
+                continue
+            d = self.devices.get(did)
+            out.append({"id": did, "title": title, "chosen": chosen.get(did, ""),
+                        "found": str(d.t.root) if d else None,
+                        "version": d.t.bts_version if d else None,
+                        "error": self.missing.get(did)})
+        return out
+
     def start_backup(self, folder: str | None = None) -> dict:
         if self.backup and self.backup.running:
             return self.backup.status()
@@ -209,6 +271,7 @@ class State:
              "bts_version": d.t.bts_version if d else (any_bts.t.bts_version if any_bts else None),
              "backup": self.backup.status() if self.backup else None,
              "backup_dir": load_config()["backup_dir"],
+             "bts": self.bts_status(),
              "history": self.log.recent(60)}
         if connected:
             s["patch"] = d.summary()

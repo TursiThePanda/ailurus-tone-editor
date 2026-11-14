@@ -6,22 +6,18 @@ install and evaluated in an embedded JS engine (mini-racer / V8) with a stubbed 
 from __future__ import annotations
 
 import json
-import os
 import re
-import sys
 import threading
 from pathlib import Path
 
 from py_mini_racer import MiniRacer
 
-# Where BTS keeps its html/js tree. Windows path is not known yet (TODO, verify on a real install).
-CANDIDATES = {
-    "darwin": [
-        "/Applications/BOSS/GX-10/BOSS TONE STUDIO for GX-10.app/Contents/Resources/html/js",
-    ],
-    "win32": [],
-    "linux": [],
-}
+from .locate import BTSError, BTSProduct, locate  # noqa: F401  (BTSError re-exported)
+
+GX10_BTS = BTSProduct(
+    unit="GX-10", app="BOSS TONE STUDIO for GX-10", env="GX10_BTS_JS",
+    setting="config/product_setting.js", required=("config/effect_parameter.js",),
+    mac=("/Applications/BOSS/GX-10/BOSS TONE STUDIO for GX-10.app/Contents/Resources/html/js",))
 
 SIZE_CONSTANTS = {  # from utilities/constant.js; byte layout of each size code
     0x10000: ("byte", 1), 0x10001: ("byte", 1), 0x10002: ("byte", 1), 0x10003: ("byte", 1),
@@ -30,20 +26,9 @@ SIZE_CONSTANTS = {  # from utilities/constant.js; byte layout of each size code
 }
 
 
-class BTSError(RuntimeError):
-    pass
-
-
-def find_bts_root(override: str | None = None) -> Path:
-    paths = [override] if override else []
-    paths += [os.environ.get("GX10_BTS_JS", "")] + CANDIDATES.get(sys.platform, [])
-    for p in paths:
-        if p and (Path(p) / "config" / "effect_parameter.js").is_file():
-            return Path(p)
-    raise BTSError(
-        "BOSS TONE STUDIO for GX-10 was not found. Install it from boss.info "
-        "(it does not need to run), or set GX10_BTS_JS to its html/js folder."
-    )
+def find_bts_root(chosen: str | None = None) -> Path:
+    """The html/js folder of BOSS TONE STUDIO for GX-10 (see locate.py for where we look)."""
+    return locate(GX10_BTS, chosen)
 
 
 class Tables:

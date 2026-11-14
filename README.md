@@ -13,7 +13,8 @@ works with.
 
 Roland's parameter tables are **not** part of this project: they are read at runtime from
 your installed BOSS TONE STUDIO for GX-10 / for KATANA Gen 3 (the one for your unit must be
-installed, but must not be running).
+installed, but must not be running). It is found in the usual install place by itself; if
+you installed it elsewhere, choose its folder in *Settings → BOSS TONE STUDIO*.
 
 ## Run (from source)
 
@@ -74,6 +75,7 @@ Claude Code: `claude mcp add --transport http ailurus-tone http://127.0.0.1:8710
 
 ## Layout
 
+    ailurus_tone/locate.py      find each unit's BOSS TONE STUDIO (Settings, usual places, registry)
     ailurus_tone/bts.py         load tables from the installed BOSS TONE STUDIO (embedded V8)
     ailurus_tone/roland.py      generic Roland SysEx RQ1/DT1 transport (device independent)
     ailurus_tone/device.py      GX-10 profile: addresses, patch layout, decode, live edits, undo

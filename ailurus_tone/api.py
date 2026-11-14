@@ -9,11 +9,12 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 
 from .backup import load_config, save_config
+from .locate import BTSError
 from .roland import NotConnected
 from .state import State
 
 WEB = Path(__file__).parent / "web"
-USER_ERRORS = (NotConnected, KeyError, ValueError, TimeoutError, FileNotFoundError, PermissionError)
+USER_ERRORS = (NotConnected, KeyError, ValueError, TimeoutError, FileNotFoundError, PermissionError, BTSError)
 
 
 async def _body(req: Request) -> dict:
@@ -124,3 +125,9 @@ def register(mcp: MCPServer, s: State):
     async def config(req: Request) -> Response:
         b = await _body(req)
         return await _run(lambda: set_backup_dir(b["backup_dir"]))
+
+    @route("/api/bts", methods=["POST"])
+    async def bts(req: Request) -> Response:
+        """Where a unit's BOSS TONE STUDIO is: {id, path}; an empty path = look in the usual places."""
+        b = await _body(req)
+        return await _run(lambda: s.set_bts_path(str(b["id"]), b.get("path")))
