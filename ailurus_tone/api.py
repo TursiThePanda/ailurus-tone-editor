@@ -63,7 +63,7 @@ def register(mcp: MCPServer, s: State):
 
     @route("/api/state", methods=["GET"])
     async def state(_: Request) -> Response:
-        return await _run(s.status)
+        return await _run(lambda: s.status() | {"update": updater.notice()})
 
     @route("/api/help", methods=["GET"])
     async def help_texts(_: Request) -> Response:
@@ -130,15 +130,47 @@ def register(mcp: MCPServer, s: State):
 
     @route("/api/about", methods=["GET"])
     async def about_app(_: Request) -> Response:
-        return JSONResponse(about(getattr(s, "port", 8710), updater.available()))
+        return JSONResponse(about(getattr(s, "port", 8710), updater.available())
+                            | {"can_quit": getattr(s, "quit", None) is not None})
+
+    @route("/api/quit", methods=["POST"])
+    async def quit_app(_: Request) -> Response:
+        """Linux (UI in the browser): there is no window to close, so the page offers Quit."""
+        q = getattr(s, "quit", None)
+        if not q:
+            return JSONResponse({"error": "Close the app window to quit."}, status_code=400)
+        q()
+        return JSONResponse({"ok": True})
 
     @route("/api/update/check", methods=["POST"])
     async def check_update(_: Request) -> Response:
-        """Settings → About → Check for updates: the updater shows its own window."""
+        """Settings → About → Check for updates: Sparkle/WinSparkle show their own window; on
+        Linux the answer comes back here ({latest, url, newer})."""
         if not updater.available():
             return JSONResponse({"error": "Updates are checked by the installed app only."}, status_code=400)
-        updater.check_now()
-        return JSONResponse({"ok": True})
+
+        def check():
+            try:
+                return updater.check_now()
+            except (OSError, ValueError) as e:
+                raise TimeoutError(f"Could not reach GitHub to check for updates: {e}") from e
+        return await _run(check)
+
+    @route("/api/bts/installer", methods=["POST"])
+    async def bts_installer(req: Request) -> Response:
+        """Linux: the BTS Windows installer as the raw body; ?id=<unit>&name=<file name>."""
+        q = req.query_params
+        data = await req.body()
+        if not data or len(data) > 300_000_000:
+            return JSONResponse({"error": "Choose the BOSS TONE STUDIO installer (.exe or .zip)."}, status_code=400)
+        return await _run(lambda: s.install_bts(q.get("id", ""), q.get("name", ""), data))
+
+    @route("/api/bts/download", methods=["POST"])
+    async def bts_download(req: Request) -> Response:
+        """Linux: {id, agreed}: download Roland's BTS for Windows and unpack it (agreed = the user
+        accepted Roland's software licence agreement in Settings)."""
+        b = await _body(req)
+        return await _run(lambda: s.install_bts(str(b.get("id", "")), agreed=b.get("agreed") is True))
 
     @route("/api/bts", methods=["POST"])
     async def bts(req: Request) -> Response:

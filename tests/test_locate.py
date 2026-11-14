@@ -92,3 +92,83 @@ def test_midi_port_names_on_every_platform():
     assert find(["2- KATANA3 2"], "KATANA3") == 0                         # Windows, 2nd device
     assert find(["GX-100 1", "KATANA3 DAW CTRL 2"], "GX-10") is None      # no prefix matches
     assert find(["KATANA3 DAW CTRL 2"], "KATANA3") is None
+    linux = ["Midi Through:Midi Through Port-0 14:0", "GX-10:GX-10 MIDI 1 40:0", "GX-10:GX-10 MIDI 2 40:1"]
+    assert find(linux, "GX-10") == 1                                       # Linux: port 1 of 2
+    assert find(["KATANA3:KATANA3 MIDI 1 24:0"], "KATANA3") == 0
+    assert find(["GX-100:GX-100 MIDI 1 40:0", "GX-10:GX-10 MIDI 2 40:1"], "GX-10") is None
+
+
+def _gx_exe_bytes():
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("html/js/config/product_setting.js", "x = { name:\t'GX-10' }")
+        z.writestr("html/js/config/effect_parameter.js", "")
+    return b"MZ" + b"\0" * 100 + buf.getvalue()
+
+
+def test_linux_unpacks_the_bts_windows_installer(tmp_path, monkeypatch):
+    """No BTS for Linux: its Windows installer (.exe or the .zip from boss.info) is unpacked with
+    innoextract into our data folder. A fake innoextract writes what the real one does."""
+    import stat
+    import sys
+    import zipfile
+
+    from ailurus_tone import locate as loc
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "cache"))
+    payload = tmp_path / "payload.exe"
+    payload.write_bytes(_gx_exe_bytes())
+    fake = tmp_path / "innoextract"
+    fake.write_text(f"""#!{sys.executable}
+import sys, shutil, pathlib
+a = sys.argv; out = pathlib.Path(a[a.index("--output-dir") + 1]); inst = pathlib.Path(a[-1])
+if b"GX10" not in inst.read_bytes():
+    sys.exit("Not a supported Inno Setup installer!")
+(out / "app").mkdir(parents=True)
+shutil.copy({str(payload)!r}, out / "app" / "BOSS TONE STUDIO for GX-10.exe")
+""")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setattr(loc, "innoextract", lambda: str(fake))
+
+    inst = tmp_path / "BOSS TONE STUDIO for GX-10 Installer.exe"
+    inst.write_bytes(b"MZ GX10 installer")
+    root = loc.from_installer(inst, GX10_BTS)
+    assert GX10_BTS.is_root(root)
+    kept = tmp_path / "data" / "ailurus-tone-editor" / "BOSS TONE STUDIO" / "BOSS TONE STUDIO for GX-10"
+    assert (kept / "BOSS TONE STUDIO for GX-10.exe").is_file()
+    assert not (kept.parent / ".unpack").exists()
+    assert locate(GX10_BTS, str(kept)) == root                       # what Settings stores
+
+    zipped = tmp_path / "gx10_bts_w102.zip"                           # as downloaded from boss.info
+    with zipfile.ZipFile(zipped, "w") as z:
+        z.write(inst, inst.name)
+    assert loc.from_installer(zipped, GX10_BTS) == root
+
+    other = tmp_path / "something else.exe"
+    other.write_bytes(b"MZ nope")
+    with pytest.raises(BTSError, match="is not the installer of BOSS TONE STUDIO for GX-10"):
+        loc.from_installer(other, GX10_BTS)
+    with pytest.raises(BTSError, match="not the installer of BOSS TONE STUDIO for KATANA"):
+        loc.from_installer(inst, KATANA3_BTS)
+
+
+def test_newest_windows_bts_on_boss_info():
+    from ailurus_tone.locate import newest_download
+    listing = '''
+      <a href="/support/by_product/gx-10/updates_drivers/509207">BOSS TONE STUDIO for GX-10 Ver.1.0.0 for Windows</a>
+      <a href="/support/by_product/gx-10/updates_drivers/510890"><span>BOSS TONE STUDIO for GX-10
+        Ver.1.0.10 for macOS</span></a>
+      <a href="/support/by_product/gx-10/updates_drivers/510889"><span>BOSS TONE STUDIO for GX-10
+        Ver.1.0.2 for Windows</span></a>'''
+    pages = {GX10_BTS.releases: listing,
+             "https://tw.boss.info/support/by_product/gx-10/updates_drivers/510889":
+                 'x <a href="https://static.roland.com/assets/media/zip/gx10_bts_w102.zip">Download</a>'}
+    assert newest_download(GX10_BTS, get=pages.__getitem__) == (
+        "1.0.2", "https://static.roland.com/assets/media/zip/gx10_bts_w102.zip")
+    assert newest_download(GX10_BTS, get=lambda u: "<html>changed</html>") is None
+
+    def offline(u):
+        raise OSError("no network")
+    assert newest_download(GX10_BTS, get=offline) is None

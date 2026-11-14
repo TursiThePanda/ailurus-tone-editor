@@ -1,5 +1,7 @@
-# Builds Ailurus Tone Editor on GitHub's Windows and macOS runners and attaches the Windows
-# installer and the DMG to the release (PyInstaller cannot cross-compile).
+# Builds Ailurus Tone Editor on GitHub's Windows, Linux and macOS runners and attaches the
+# Windows installer, the Linux AppImage and the DMG to the release (PyInstaller cannot
+# cross-compile). The AppImage does not update itself: the app only tells the user about a newer
+# release, so it is not in appcast.xml.
 #
 # Release: bump `version` in pyproject.toml, add docs/release-notes/<version>.md, commit, then
 #   git tag -a v<version> -m "Ailurus Tone Editor <version>" && git push origin main --follow-tags
@@ -61,8 +63,39 @@ jobs:
           name: windows-setup
           path: dist/Ailurus-Tone-Editor-*-windows-setup.exe*
 
+  linux:
+    # the oldest supported Ubuntu: the AppImage needs a glibc at least as old as the users' systems
+    runs-on: ubuntu-22.04
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0 # the build number is the commit count
+
+      # python-rtmidi has no Linux wheel newer than CPython 3.12 either
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Dependencies and tests
+        run: |
+          sudo apt-get install -y --no-install-recommends libasound2
+          python -m venv .venv
+          .venv/bin/pip install --quiet -e ".[dev]"
+          .venv/bin/python -m pytest -q
+
+      - name: Build
+        run: packaging/build_linux.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-appimage
+          path: dist/Ailurus-Tone-Editor-*-x86_64.AppImage*
+
   build:
-    needs: windows
+    needs: [windows, linux]
     # macOS 27 + Xcode 27 on Apple Silicon; Xcode's actool compiles the layered icon
     runs-on: xcode-27
     env:
@@ -95,6 +128,11 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           name: windows-setup
+          path: dist
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: linux-appimage
           path: dist
 
       - name: Checksums
@@ -134,6 +172,7 @@ jobs:
           path: |
             dist/Ailurus-Tone-Editor-*.dmg*
             dist/Ailurus-Tone-Editor-*-windows-setup.exe*
+            dist/Ailurus-Tone-Editor-*-x86_64.AppImage*
             dist/appcast.xml
 
       - name: Attach to the release
@@ -148,4 +187,6 @@ jobs:
           gh release upload "$TAG" "dist/Ailurus-Tone-Editor-${TAG#v}.dmg" \
             "dist/Ailurus-Tone-Editor-${TAG#v}.dmg.sha256" \
             "dist/Ailurus-Tone-Editor-${TAG#v}-windows-setup.exe" \
-            "dist/Ailurus-Tone-Editor-${TAG#v}-windows-setup.exe.sha256" dist/appcast.xml --clobber
+            "dist/Ailurus-Tone-Editor-${TAG#v}-windows-setup.exe.sha256" \
+            "dist/Ailurus-Tone-Editor-${TAG#v}-x86_64.AppImage" \
+            "dist/Ailurus-Tone-Editor-${TAG#v}-x86_64.AppImage.sha256" dist/appcast.xml --clobber

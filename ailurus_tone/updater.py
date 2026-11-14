@@ -1,4 +1,5 @@
-"""Automatic updates of the packaged app: Sparkle on macOS, WinSparkle on Windows.
+"""Automatic updates of the packaged app: Sparkle on macOS, WinSparkle on Windows; on Linux
+(AppImage) only a notice that a newer release exists - the user downloads it himself.
 
 Both read the same feed - appcast.xml on the latest GitHub release - and accept only updates
 signed with the EdDSA key whose public half is PUBLIC_KEY (WinSparkle verifies Sparkle's
@@ -9,8 +10,13 @@ When run from source (python -m ailurus_tone) there is no updater.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import sys
+import threading
+import time
+import urllib.request
 from pathlib import Path
 
 DEFAULT_FEED_URL = "https://github.com/TursiThePanda/ailurus-tone-editor/releases/latest/download/appcast.xml"
@@ -23,10 +29,12 @@ DEFAULT_PUBLIC_KEY = "SXtYux7aYW1uqXfGmQ53urbMglj07Rl8THr8bc+8Wx4="
 FEED_URL = os.environ.get("AILURUS_FEED_URL") or DEFAULT_FEED_URL
 PUBLIC_KEY = os.environ.get("AILURUS_SPARKLE_PUBLIC_KEY") or DEFAULT_PUBLIC_KEY
 CHECK_INTERVAL = 86400                      # once a day
+LATEST_API = "https://api.github.com/repos/TursiThePanda/ailurus-tone-editor/releases/latest"
 
 _controller = None                          # macOS: SPUStandardUpdaterController
 _winsparkle = None                          # Windows: the loaded WinSparkle.dll
 _callbacks = []                             # keep ctypes callbacks alive while the DLL holds them
+_linux = {"started": False, "notice": None, "checked": None}   # Linux: last check and its result
 
 
 # ---- macOS: Sparkle ------------------------------------------------------------------
@@ -100,9 +108,54 @@ def _win_start(on_quit):
     _winsparkle = ws
 
 
+# ---- Linux: a notice only -------------------------------------------------------------
+def linux_packaged() -> bool:
+    """The AppImage (its runtime sets APPIMAGE); not when run from source."""
+    return sys.platform.startswith("linux") and getattr(sys, "frozen", False)
+
+
+def _version(text: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in re.findall(r"\d+", text)[:3])
+
+
+def check_latest(current: str, fetch=None) -> dict:
+    """Ask GitHub for the latest release. {"latest", "url", "newer"}; raises OSError offline."""
+    def get():
+        req = urllib.request.Request(LATEST_API, headers={"Accept": "application/vnd.github+json",
+                                                          "User-Agent": "ailurus-tone-editor"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.load(r)
+    rel = (fetch or get)()
+    latest = str(rel.get("tag_name", "")).lstrip("v")
+    newer = bool(latest) and _version(latest) > _version(current)
+    return {"latest": latest, "url": rel.get("html_url") or "", "newer": newer}
+
+
+def _linux_check() -> dict:
+    from .about import build_info
+    r = check_latest(build_info()["version"])
+    _linux["checked"] = time.time()
+    _linux["notice"] = r if r["newer"] else None
+    return r
+
+
+def _linux_loop():
+    while True:
+        try:
+            _linux_check()
+        except (OSError, ValueError):
+            pass                            # offline: try again tomorrow
+        time.sleep(CHECK_INTERVAL)
+
+
+def notice() -> dict | None:
+    """Linux: {"latest", "url"} once a newer release is known, for the banner."""
+    return _linux["notice"]
+
+
 # ---- both ----------------------------------------------------------------------------
 def available() -> bool:
-    return framework_path() is not None or dll_path() is not None
+    return framework_path() is not None or dll_path() is not None or linux_packaged()
 
 
 def start(on_quit=lambda: None):
@@ -111,14 +164,21 @@ def start(on_quit=lambda: None):
         on_main_thread(_mac_start)
     elif dll_path() is not None:
         _win_start(on_quit)
+    elif linux_packaged() and not _linux["started"]:
+        _linux["started"] = True
+        threading.Thread(target=_linux_loop, daemon=True).start()
 
 
-def check_now():
-    """"Check for Updates…": the updater shows its own window with the result."""
+def check_now() -> dict | None:
+    """"Check for Updates…": Sparkle/WinSparkle show their own window with the result;
+    on Linux the result is returned for the page to show."""
     if _controller is not None:
         on_main_thread(lambda: _controller.checkForUpdates_(None))
     elif _winsparkle is not None:
         _winsparkle.win_sparkle_check_update_with_ui()
+    elif linux_packaged():
+        return _linux_check()
+    return None
 
 
 def stop():

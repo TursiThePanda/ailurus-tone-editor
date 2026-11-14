@@ -1,6 +1,6 @@
 """Ailurus Tone Editor entry point: one process owns the MIDI port and serves the window, REST and MCP.
 
-    python -m ailurus_tone            own app window (system webview)
+    python -m ailurus_tone            own app window (system webview); on Linux the UI opens in the browser
     python -m ailurus_tone --server   no window: MCP + UI at http://127.0.0.1:8710/
     python -m ailurus_tone --demo F   no GX-10 needed: one patch from backup file F, nothing is sent
     --port N                  listen on another port (default 8710)
@@ -10,6 +10,9 @@ Draft 1: edits go to the unit's TEMP (current sound) only; no user slot is ever 
 """
 from __future__ import annotations
 
+import os
+import socket
+import subprocess
 import sys
 import threading
 import time
@@ -51,6 +54,51 @@ class WindowAPI:
         return r[0] if r else None
 
 
+def already_running(port: int) -> bool:
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        return s.connect_ex((HOST, port)) == 0
+
+
+def open_browser(url: str):
+    """The user's default browser. A packaged app points LD_LIBRARY_PATH at its own libraries;
+    the browser must get the system's (PyInstaller keeps the original in *_ORIG)."""
+    env = dict(os.environ)
+    for var in ("LD_LIBRARY_PATH", "LD_PRELOAD"):
+        if f"{var}_ORIG" in env:
+            env[var] = env.pop(f"{var}_ORIG")
+        elif getattr(sys, "frozen", False):
+            env.pop(var, None)
+    try:
+        subprocess.Popen(["xdg-open", url], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        import webbrowser
+        webbrowser.open(url)
+
+
+def run_in_browser(server: uvicorn.Server, state: State, port: int):
+    """Linux: no app window - serve, open the UI in the browser, run until Quit or Ctrl+C."""
+    url = f"http://{HOST}:{port}/"
+    t = threading.Thread(target=server.run, daemon=True)
+    t.start()
+    for _ in range(200):
+        if server.started or not t.is_alive():
+            break
+        time.sleep(0.05)
+    if not server.started:
+        sys.exit(f"Ailurus Tone Editor: cannot listen on {HOST}:{port}.")
+    state.quit = lambda: setattr(server, "should_exit", True)
+    print(f"Ailurus Tone Editor runs at {url} (MCP: {url}mcp). Quit from Settings → About, or Ctrl+C.")
+    updater.start()
+    open_browser(url)
+    try:
+        while t.is_alive():
+            t.join(0.5)
+    except KeyboardInterrupt:
+        server.should_exit = True
+        t.join(5)
+
+
 def build(state: State, port: int = PORT):
     mcp = MCPServer(name="ailurus-tone", title="Ailurus Tone Editor (BOSS GX-10, KATANA Gen 3)",
                     instructions=mcp_tools.INSTRUCTIONS)
@@ -68,6 +116,10 @@ def build(state: State, port: int = PORT):
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     port = int(argv[argv.index("--port") + 1]) if "--port" in argv else PORT
+    browser = sys.platform.startswith("linux") and "--server" not in argv
+    if browser and already_running(port):      # started again from the menu: show the running one
+        open_browser(f"http://{HOST}:{port}/")
+        return
     state = State(only=["gx10"] if "--demo" in argv else None)
     if "--demo" in argv:
         from .demo import load_demo
@@ -84,6 +136,9 @@ def main(argv=None):
     try:
         if "--server" in argv:
             server.run()
+            return
+        if browser:
+            run_in_browser(server, state, port)
             return
         import webview
         threading.Thread(target=server.run, daemon=True).start()

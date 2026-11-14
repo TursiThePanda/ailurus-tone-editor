@@ -34,6 +34,7 @@ input[type=search], input[type=text], select { font: inherit; color: var(--text)
 .badge { font-size: 11px; padding: 2px 8px; border-radius: 6px; }
 .badge.warn { background: var(--warn-bg); color: var(--warn); }
 .message { padding: 8px 14px; background: var(--warn-bg); color: var(--warn); border-bottom: 1px solid var(--line); }
+.message.note { background: var(--panel); color: inherit; }
 .layout { flex: 1; display: grid; grid-template-columns: 210px minmax(0, 1fr) 280px; min-height: 0; }
 .patches, .changes { background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
 .patches { border-right: 1px solid var(--line); padding: 10px 0 0; }

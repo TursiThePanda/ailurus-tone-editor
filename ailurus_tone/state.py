@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .backup import BulkBackup, config_dir, load_config, save_config
 from .history import ActivityLog
-from .locate import BTSError
+from .locate import BTSError, data_dir, download_installer, from_installer, newest_download
 from .roland import NotConnected, RolandPort
 from .unit import RolandUnit
 from .units import BY_KIND
@@ -215,6 +215,38 @@ class State:
             self.bump()
         return {"bts": self.bts_status()}
 
+    def install_bts(self, did: str, filename: str | None = None, data: bytes | None = None,
+                    agreed: bool = False) -> dict:
+        """Linux: unpack the unit's BTS Windows installer into our data folder and use it from there.
+        Either the user gave us the installer (.exe or .zip: filename + data), or he accepted
+        Roland's licence and we download Roland's zip ourselves."""
+        if did not in PROFILES or (self.only and did not in self.only):
+            raise ValueError(f"unknown unit '{did}'")
+        product = PROFILES[did].bts
+        up = data_dir() / ".upload"
+        if data is not None:
+            up.mkdir(parents=True, exist_ok=True)
+            f = up / (Path(filename or "").name or "installer.exe")
+            f.write_bytes(data)
+            return self._unpack_and_use(did, f)
+        if not agreed:
+            raise ValueError("Accept Roland's software licence agreement first.")
+        newest = newest_download(product)
+        if newest and newest[1] != product.download:
+            try:   # a newer BTS than we know: use it if its tables still read, else the known one
+                return self._unpack_and_use(did, download_installer(product, up, newest[1]))
+            except BTSError:
+                pass
+        return self._unpack_and_use(did, download_installer(product, up))
+
+    def _unpack_and_use(self, did: str, installer: Path) -> dict:
+        product = PROFILES[did].bts
+        try:
+            root = from_installer(installer, product)
+        finally:
+            installer.unlink(missing_ok=True)
+        return self.set_bts_path(did, str(data_dir() / product.app)) | {"root": str(root)}
+
     def _ordered(self, did, new):
         """Keep PROFILES order, so the unit menu does not reshuffle."""
         for i in PROFILES:
@@ -233,7 +265,9 @@ class State:
             out.append({"id": did, "title": unit.title, "chosen": chosen.get(did, ""),
                         "found": str(d.t.root) if d else None,
                         "version": d.t.bts_version if d else None,
-                        "error": self.missing.get(did)})
+                        "error": self.missing.get(did),
+                        "installer": sys.platform.startswith("linux"),   # no BTS for Linux: unpack it
+                        "download": bool(unit.bts.download), "licence_page": unit.bts.licence_page})
         return out
 
     def start_backup(self, folder: str | None = None) -> dict:

@@ -38,6 +38,8 @@ def hex_addr(addr) -> str:
 
 # a MIDI port name with what Windows adds around it: optional "2- " in front, " 1" behind
 PORT_DECOR = re.compile(r"(?:\d+- )?(.+?)(?: \d+)?")
+# Linux (ALSA sequencer): "<client>:<port> <client#>:<port#>", e.g. "GX-10:GX-10 MIDI 1 40:0"
+ALSA_PORT = re.compile(r"(.+?):(.+) \d+:\d+")
 
 class NotConnected(RuntimeError):
     pass
@@ -66,9 +68,14 @@ class RolandPort:
     def find_port(ports: list[str], name: str) -> int | None:
         """Index of the unit's port. macOS names it exactly ('GX-10'); on Windows rtmidi appends
         the port number ('GX-10 1') and Windows may prefix a second device of the same name
-        ('2- GX-10 3')."""
+        ('2- GX-10 3'); on Linux ALSA names client and port ('GX-10:GX-10 MIDI 1 40:0') and a
+        unit may have several ports - SysEx goes over the first ('MIDI 1')."""
         for i, p in enumerate(ports):
-            if PORT_DECOR.fullmatch(p) and PORT_DECOR.fullmatch(p).group(1) == name:
+            m = PORT_DECOR.fullmatch(p)
+            if m and m.group(1) == name:
+                return i
+            m = ALSA_PORT.fullmatch(p)
+            if m and m.group(1) == name and m.group(2) in (name, f"{name} MIDI 1"):
                 return i
         return None
 

@@ -19,7 +19,10 @@ GX10_BTS = BTSProduct(
     unit="GX-10", app="BOSS TONE STUDIO for GX-10", env="GX10_BTS_JS",
     setting="config/product_setting.js", required=("config/effect_parameter.js",),
     mac=("/Applications/BOSS/GX-10/BOSS TONE STUDIO for GX-10.app/Contents/Resources/html/js",),
-    html_sub="js")
+    html_sub="js",
+    download="https://static.roland.com/assets/media/zip/gx10_bts_w102.zip",                 # 1.0.2
+    releases="https://tw.boss.info/support/by_product/gx-10/updates_drivers/",
+    licence_page="https://www.boss.info/global/support/by_product/gx-10/updates_drivers/")
 
 SIZE_CONSTANTS = {  # from utilities/constant.js; byte layout of each size code
     0x10000: ("byte", 1), 0x10001: ("byte", 1), 0x10002: ("byte", 1), 0x10003: ("byte", 1),

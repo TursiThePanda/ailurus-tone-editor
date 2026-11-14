@@ -158,7 +158,7 @@ async function poll() {
       const r = await api("/api/patches"); patches = r.patches; patchesFor = r.device;
     }
     if (!s.connected) patchesFor = s.device;
-    renderTop();
+    renderTop(); renderUpdate(s.update);
     if (s.version !== lastVersion || s.patch?.current !== prevPatch) {
       lastVersion = s.version;
       renderPatches(); renderChain(); renderChanges(); await loadFx();
@@ -283,14 +283,44 @@ async function loadAbout() {
     $("aboutBox").innerHTML = `<p><b>Ailurus Tone Editor ${esc(a.version)}</b> <span class="muted">(build ${esc(a.build)}, ${esc(a.platform)})</span></p>
       <p>Live editor and MCP server for BOSS units: GX-10 and KATANA Gen 3. Edit your tone by hand, or let an AI do it.</p>
       <p>${a.links.map((l) => link(l.url, l.title)).join(" · ")}</p>
-      ${a.can_update ? `<p><button type="button" id="checkUpdates">Check for updates</button> <span class="muted">Checked once a day by itself.</span></p>` : ""}
+      ${a.can_update ? `<p><button type="button" id="checkUpdates">Check for updates</button> <span class="muted">Checked once a day by itself.</span><br><span id="updateResult"></span></p>` : ""}
       <p>MCP endpoint while the app runs: <code>${esc(a.mcp_url)}</code><br>
         <span class="muted">Claude Code:</span> <code>claude mcp add --transport http ailurus-tone ${esc(a.mcp_url)}</code></p>
+      ${a.can_quit ? `<p><button type="button" id="quitApp">Quit Ailurus Tone Editor</button>
+        <span class="muted">The app runs in the background while this page is closed; the AI can still reach it.</span></p>` : ""}
       <p>Licensed under ${link(a.licence.url, a.licence.title)}.<br><span class="muted">${esc(a.notice)}</span></p>
       <p class="muted">Built with ${a.libraries.map((l) => `${link(l.url, l.name)} (${esc(l.licence)})`).join(" · ")}</p>`;
+    const q = $("quitApp");
+    if (q) q.onclick = async () => {
+      try { await api("/api/quit", {}); document.body.innerHTML = "<p style='padding:2em'>Ailurus Tone Editor has quit. You can close this page.</p>"; }
+      catch (e) { flash(e.message); }
+    };
     const b = $("checkUpdates");
-    if (b) b.onclick = async () => { try { await api("/api/update/check", {}); } catch (e) { flash(e.message); } };
+    if (b) b.onclick = async () => {
+      try {
+        const r = await api("/api/update/check", {});
+        if (r.latest !== undefined) {           // Linux: the answer comes back to the page
+          $("updateResult").innerHTML = r.newer ? updateHtml(r) : `You have the latest version (${esc(r.latest)}).`;
+        }
+      } catch (e) { flash(e.message); }
+    };
   } catch (e) { $("aboutBox").textContent = e.message; }
+}
+
+// Linux: a newer release exists (the AppImage does not update itself)
+function updateHtml(u) {
+  return `Ailurus Tone Editor ${esc(u.latest)} is available. <a href="${esc(u.url)}" target="_blank"
+    rel="noopener">Download it</a> and replace this AppImage with it.`;
+}
+function renderUpdate(u) {
+  const n = $("updateNote");
+  if (!u || localStorage.getItem("dismissedUpdate") === u.latest) { n.classList.add("hidden"); return; }
+  if (n.dataset.v !== u.latest) {
+    n.dataset.v = u.latest;
+    n.innerHTML = `${updateHtml(u)} <button type="button" id="dismissUpdate">Later</button>`;
+    $("dismissUpdate").onclick = () => { try { localStorage.setItem("dismissedUpdate", u.latest); } catch (e) {} n.classList.add("hidden"); };
+  }
+  n.classList.remove("hidden");
 }
 
 // one row per supported unit: where its BOSS TONE STUDIO is (chosen folder or found by itself)
@@ -304,20 +334,57 @@ function renderBts(list, errors = {}) {
       <div class="row"><input type="text" readonly value="${esc(b.chosen)}" placeholder="Automatic (usual install place)">
         <button type="button" data-act="pick">Choose…</button>
         <button type="button" data-act="auto" ${b.chosen ? "" : "disabled"}>Automatic</button></div>
-      <div class="small muted">${st}</div></div>`;
+      ${b.installer ? `<div class="small muted">There is no BOSS TONE STUDIO for Linux; the app uses the
+        Windows one (it only reads its tables, nothing is run).</div>
+        ${b.download ? `<div class="row small"><label><input type="checkbox" data-act="agree"> I accept
+          <a href="${esc(b.licence_page)}" target="_blank" rel="noopener">Roland's software licence agreement</a></label>
+          <button type="button" data-act="download" disabled>Download from Roland</button></div>` : ""}
+        <div class="row small"><span class="muted">Or give its installer (.exe or .zip from boss.info):</span>
+        <button type="button" data-act="installer">Use installer…</button></div>` : ""}
+      <div class="small muted st">${st}</div></div>`;
   }).join("");
 }
+$("btsRows").addEventListener("change", (e) => {
+  if (e.target.dataset.act !== "agree") return;
+  e.target.closest(".bts").querySelector('button[data-act="download"]').disabled = !e.target.checked;
+});
 $("btsRows").addEventListener("click", async (e) => {
   const btn = e.target.closest("button[data-act]"); if (!btn) return;
   const row = btn.closest(".bts"), id = row.dataset.id;
   let path = "";
+  if (btn.dataset.act === "installer") { pickInstaller(row, id); return; }
+  if (btn.dataset.act === "download") {
+    row.querySelectorAll("button, input").forEach((b) => (b.disabled = true));
+    row.querySelector(".st").textContent = "Downloading from Roland and unpacking (about 30 MB)…";
+    try { const r = await api("/api/bts/download", { id, agreed: true }); state.bts = r.bts; renderBts(r.bts); lastVersion = -1; }
+    catch (err) { renderBts(state?.bts || [], { [id]: err.message }); }
+    return;
+  }
   if (btn.dataset.act === "pick") {
     path = await pickFolder(row.querySelector("input").value || ""); if (!path) return;
   }
-  btn.disabled = true; row.querySelector(".muted").textContent = "Loading tables…";
+  btn.disabled = true; row.querySelector(".st").textContent = "Loading tables…";
   try { const r = await api("/api/bts", { id, path }); state.bts = r.bts; renderBts(r.bts); lastVersion = -1; }
   catch (err) { renderBts(state?.bts || [], { [id]: err.message }); }
 });
+// Linux: upload the BTS Windows installer; the app unpacks it (innoextract) and reads it from there
+function pickInstaller(row, id) {
+  const inp = document.createElement("input");
+  inp.type = "file"; inp.accept = ".exe,.zip";
+  inp.onchange = async () => {
+    const f = inp.files[0]; if (!f) return;
+    row.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    row.querySelector(".st").textContent = "Unpacking the installer…";
+    try {
+      const r = await fetch(`/api/bts/installer?id=${encodeURIComponent(id)}&name=${encodeURIComponent(f.name)}`,
+        { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: f });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || r.statusText);
+      state.bts = j.bts; renderBts(j.bts); lastVersion = -1;
+    } catch (err) { renderBts(state?.bts || [], { [id]: err.message }); }
+  };
+  inp.click();
+}
 $("pickDir").onclick = async () => { const d = await pickFolder($("backupDir").value); if (d) $("backupDir").value = d; };
 $("saveSettings").onclick = async () => {
   try { await api("/api/config", { backup_dir: $("backupDir").value }); $("settings").close(); }

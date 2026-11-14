@@ -5,7 +5,7 @@
 Open editor for the BOSS GX-10 and the BOSS KATANA Gen 3 amps — an alternative to BOSS TONE
 STUDIO, with its own app window
 and an MCP server, so an AI (Claude, Codex, Gemini, LM Studio, ...) can tune your sound live
-while you play. **Draft 1** - packaged apps for macOS and Windows; Linux later (runs from source).
+while you play. **Draft 1** - packaged apps for macOS, Windows and Linux (AppImage).
 
 Not affiliated with, endorsed by or sponsored by Roland Corporation or BOSS. BOSS, GX-10, KATANA
 and BOSS TONE STUDIO are trademarks of Roland Corporation, named here only to say what the app
@@ -14,11 +14,13 @@ works with.
 Roland's parameter tables are **not** part of this project: they are read at runtime from
 your installed BOSS TONE STUDIO for GX-10 / for KATANA Gen 3 (the one for your unit must be
 installed, but must not be running). It is found in the usual install place by itself; if
-you installed it elsewhere, choose its folder in *Settings → BOSS TONE STUDIO*.
+you installed it elsewhere, choose its folder in *Settings → BOSS TONE STUDIO*. There is no
+BOSS TONE STUDIO for Linux: there the app downloads the Windows one from Roland (after you
+accept Roland's licence agreement) and unpacks it; nothing of it is run.
 
 ## Run (from source)
 
-    python3.13 -m venv .venv                         # Windows: py -3.12 (python-rtmidi has no 3.13 wheel there)
+    python3.13 -m venv .venv                         # Windows and Linux: 3.12 (python-rtmidi has no 3.13 wheel there)
     .venv/bin/pip install -e ".[dev]"
     .venv/bin/python -m ailurus_tone                 # app window
     .venv/bin/python -m ailurus_tone --server        # no window, UI at http://127.0.0.1:8710/
@@ -56,6 +58,24 @@ anyway*. BOSS TONE STUDIO keeps its tables inside its .exe on Windows; the app u
 once into `%LOCALAPPDATA%\Ailurus Tone Editor\bts`. A log of the packaged app is in
 `%APPDATA%\Ailurus Tone Editor\app.log`.
 
+## Build the Linux app
+
+On x86_64 Linux with Python 3.12:
+
+    python3.12 -m venv .venv
+    .venv/bin/pip install -e ".[dev]"
+    packaging/build_linux.sh
+
+Gives `dist/Ailurus-Tone-Editor-<version>-x86_64.AppImage`. Make it executable
+(`chmod +x`) and start it: the UI opens in your browser at `http://127.0.0.1:8710/` (no app
+window on Linux); started again, it opens the running one. Quit from *Settings → About*. Both
+units work with the kernel's own USB MIDI driver (no Roland driver). In *Settings → BOSS TONE
+STUDIO* accept Roland's licence and press *Download from Roland* (the newest Windows version
+listed on boss.info, else one known to work), or give it the installer you downloaded
+yourself (`.exe` or `.zip`). It is unpacked with the bundled
+[innoextract](https://constexpr.org/innoextract/) into
+`~/.local/share/ailurus-tone-editor/BOSS TONE STUDIO`.
+
 ## Updates
 
 The app checks for a new version once a day and on demand (*Settings → About → Check for
@@ -63,7 +83,9 @@ updates*; on macOS also *Ailurus Tone Editor → Check for Updates…*), using
 [Sparkle](https://sparkle-project.org) on macOS and [WinSparkle](https://winsparkle.org) on
 Windows. Both read `appcast.xml` on the latest GitHub release, which has one item per
 platform; every update is verified with an EdDSA signature before it is installed. On macOS
-an update installed this way does not trigger "Open Anyway" again.
+an update installed this way does not trigger "Open Anyway" again. The Linux AppImage does
+not update itself: once a day it checks the latest GitHub release and shows a notice with a
+link when a newer one is out.
 Releases are built by `.github/workflows/release.yml` when a `v*` tag is pushed.
 
 ## MCP
@@ -86,7 +108,7 @@ Claude Code: `claude mcp add --transport http ailurus-tone http://127.0.0.1:8710
 - KATANA Gen 3: live edits of every block (edit buffer only, memories are never written),
   patch switching (PANEL, A:CH1..B:CH4), signal order shown as on the amp, backup of all
   9 memories. The chain is set with the CHAIN parameter, not by dragging.
-- Not yet: Save / Save as / Restore, `.tsl` import/export, Compare, Linux packaging,
+- Not yet: Save / Save as / Restore, `.tsl` import/export, Compare,
   notarized build, MCP bearer token, divider/splitter branch layout.
 
 ## Layout
@@ -111,9 +133,10 @@ Claude Code: `claude mcp add --transport http ailurus-tone http://127.0.0.1:8710
     ailurus_tone/about.py       version, links, licence and libraries for Settings → About
     ailurus_tone/updater.py     automatic updates of the packaged app (Sparkle / WinSparkle)
     packaging/                  PyInstaller spec, build_macos.sh (.app, .dmg, Sparkle),
-                                build_windows.ps1 + installer.iss (Inno Setup, WinSparkle)
+                                build_windows.ps1 + installer.iss (Inno Setup, WinSparkle),
+                                build_linux.sh (AppImage, innoextract)
     tools/appcast_add_windows.py  adds the signed Windows item to the release appcast
-    .github/workflows/          release build: DMG + Windows installer + signed appcast.xml on a v* tag
+    .github/workflows/          release build: DMG + Windows installer + AppImage + signed appcast.xml on a v* tag
     tests/                      unit tests, no unit needed
 
 ## Other BOSS units

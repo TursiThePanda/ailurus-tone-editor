@@ -29,7 +29,7 @@ def build_info() -> dict:
 
 # (name, url, licence, platforms); platforms None = everywhere
 LIBRARIES = [
-    ("pywebview", "https://pywebview.flowrl.com", "BSD-3-Clause", None),
+    ("pywebview", "https://pywebview.flowrl.com", "BSD-3-Clause", ("darwin", "win32")),
     ("MCP Python SDK", "https://github.com/modelcontextprotocol/python-sdk", "MIT", None),
     ("mini-racer with V8", "https://github.com/bpcreech/PyMiniRacer", "ISC, V8: BSD-3-Clause", None),
     ("python-rtmidi", "https://github.com/SpotlightKid/python-rtmidi", "MIT", None),
@@ -39,6 +39,7 @@ LIBRARIES = [
     ("PyObjC", "https://pyobjc.readthedocs.io", "MIT", ("darwin",)),
     ("WinSparkle", "https://winsparkle.org", "MIT", ("win32",)),
     ("pythonnet", "https://pythonnet.github.io", "MIT", ("win32",)),
+    ("innoextract", "https://constexpr.org/innoextract/", "zlib", ("linux",)),
     ("Python", "https://www.python.org", "PSF", None),
     ("PyInstaller", "https://pyinstaller.org", "GPL-2.0 with bootloader exception", None),
 ]
@@ -48,7 +49,7 @@ def about(port: int, can_update: bool) -> dict:
     info = build_info()
     return {
         "version": info["version"], "build": info["build"],
-        "platform": {"darwin": "macOS", "win32": "Windows"}.get(sys.platform, sys.platform),
+        "platform": {"darwin": "macOS", "win32": "Windows", "linux": "Linux"}.get(sys.platform, sys.platform),
         "mcp_url": f"http://127.0.0.1:{port}/mcp",
         "can_update": can_update,
         "links": [{"title": "GitHub", "url": REPO},

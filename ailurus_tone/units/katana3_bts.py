@@ -27,7 +27,10 @@ KATANA3_BTS = BTSProduct(
     unit="KATANA Gen3", app="BOSS TONE STUDIO for KATANA Gen 3", env="KATANA3_BTS_HTML",
     setting="js/config/product_setting.js",
     required=("js/config/address_map.js", "js/config/resource.js", "export/item.json", "export/layout.div"),
-    mac=("/Applications/BOSS/KATANA Gen 3/BOSS TONE STUDIO for KATANA Gen 3.app/Contents/Resources/html",))
+    mac=("/Applications/BOSS/KATANA Gen 3/BOSS TONE STUDIO for KATANA Gen 3.app/Contents/Resources/html",),
+    download="https://static.roland.com/assets/media/zip/ktn3_bts_w110.zip",                 # 1.1.0
+    releases="https://tw.boss.info/support/by_product/katana-50_gen_3/updates_drivers/",
+    licence_page="https://www.boss.info/global/support/by_product/katana-50_gen_3/updates_drivers/")
 
 
 def find_katana_root(chosen: str | None = None) -> Path:

@@ -1,5 +1,6 @@
-# PyInstaller spec for Ailurus Tone Editor: macOS .app (packaging/build_macos.sh) or a Windows
-# folder for the installer (packaging/build_windows.ps1). PyInstaller cannot cross-compile.
+# PyInstaller spec for Ailurus Tone Editor: macOS .app (packaging/build_macos.sh), a Windows
+# folder for the installer (packaging/build_windows.ps1) or a Linux folder for the AppImage
+# (packaging/build_linux.sh). PyInstaller cannot cross-compile.
 import json
 import os
 import sys
@@ -27,23 +28,32 @@ datas += collect_data_files("py_mini_racer")          # icudtl.dat must sit next
 binaries = collect_dynamic_libs("py_mini_racer")     # libmini_racer.dylib (V8)
 hidden = (collect_submodules("uvicorn")
           + collect_submodules("mcp", filter=lambda m: not m.startswith("mcp.cli")) + ["rtmidi"])
-WINDOWS = sys.platform == "win32"
+WINDOWS, LINUX = sys.platform == "win32", sys.platform.startswith("linux")
+excludes = ["tkinter", "PIL", "pytest"]
 if WINDOWS:
     datas += collect_data_files("webview")           # pywebview's WebView2 loader and .NET glue
     hidden += collect_submodules("webview.platforms.edgechromium") + ["clr"]
     binaries += [(str(ROOT / "build" / "winsparkle" / "WinSparkle.dll"), ".")]   # updater, MIT
+elif LINUX:
+    # the UI opens in the browser: no pywebview (it would drag in GTK or Qt); innoextract unpacks
+    # the BTS Windows installer (zlib licence, shipped next to it)
+    excludes += ["webview"]
+    binaries += [(str(ROOT / "build" / "innoextract" / "innoextract"), ".")]
+    datas += [(str(ROOT / "build" / "innoextract" / "innoextract.LICENSE"), ".")]
 else:
     hidden += ["PyObjCTools.AppHelper"]
 
 a = Analysis([str(ROOT / "packaging" / "launch.py")], pathex=[str(ROOT)], binaries=binaries,
-             datas=datas, hiddenimports=hidden, excludes=["tkinter", "PIL", "pytest"])
+             datas=datas, hiddenimports=hidden, excludes=excludes)
+if LINUX:   # ALSA and JACK come from the user's system (configuration and plugins live there)
+    a.binaries = [b for b in a.binaries if not b[0].startswith(("libasound.so", "libjack.so"))]
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="Ailurus Tone Editor",
           console=bool(os.environ.get("AILURUS_CONSOLE")), argv_emulation=False, target_arch=None,
           icon=str(ROOT / "assets" / "build" / "icon.ico") if WINDOWS else None,
           version=str(ROOT / "build" / "version_info.txt") if WINDOWS else None)
 coll = COLLECT(exe, a.binaries, a.datas, name="Ailurus Tone Editor")
-app = None if WINDOWS else BUNDLE(
+app = None if WINDOWS or LINUX else BUNDLE(
     coll, name="Ailurus Tone Editor.app", icon=str(ROOT / "assets" / "build" / "AppIcon.icns"),
     bundle_identifier=BUNDLE_ID, version=VERSION,
     info_plist={
