@@ -1,7 +1,7 @@
 [project]
 name = "ailurus-tone-editor"
-version = "0.1.2"
-description = "Ailurus Tone Editor: open editor for the BOSS GX-10 with live AI control over MCP. Reads Roland's parameter tables from the installed BOSS TONE STUDIO."
+version = "0.2.0"
+description = "Ailurus Tone Editor: open editor for the BOSS GX-10 and KATANA Gen 3 with live AI control over MCP. Reads Roland's parameter tables from the installed BOSS TONE STUDIO."
 readme = "README.md"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE"]
