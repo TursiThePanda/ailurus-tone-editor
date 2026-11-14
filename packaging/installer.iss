@@ -56,3 +56,5 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: postinstall nowait skipifsilent
+; An update (WinSparkle runs this installer with /SILENT) closed the app: start it again
+Filename: "{app}\{#AppExe}"; Flags: nowait; Check: WizardSilent

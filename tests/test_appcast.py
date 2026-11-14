@@ -38,3 +38,8 @@ def test_both_platforms_get_their_own_item():
     assert items[1].find(f"{SP}minimumSystemVersion") is None      # 13.0 would block Windows 10/11
     assert items[1].find("description") is not None                 # release notes in both
     assert items[1].find(f"{SP}hardwareRequirements") is None
+
+
+def test_signature_without_quotes():
+    out = add_windows(FEED, "https://x/s.exe", "sparkle:edSignature=WIN== length=5")
+    assert 'sparkle:edSignature="WIN==" length="5"' in out

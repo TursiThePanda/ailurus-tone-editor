@@ -17,7 +17,8 @@ from ailurus_tone.updater import FEED_URL, PUBLIC_KEY as SPARKLE_PUBLIC_KEY  # n
 # Sparkle/WinSparkle compare this: version + commit count, set by build_macos.sh / build_windows.ps1
 BUILD_VERSION = os.environ.get("AILURUS_BUILD_VERSION") or VERSION
 (ROOT / "build").mkdir(exist_ok=True)
-(ROOT / "build" / "build_info.json").write_text(json.dumps({"version": VERSION, "build": BUILD_VERSION}))
+(ROOT / "build" / "build_info.json").write_text(json.dumps(
+    {"version": VERSION, "build": BUILD_VERSION, "feed_url": FEED_URL, "public_key": SPARKLE_PUBLIC_KEY}))
 
 datas = [(str(ROOT / "build" / "build_info.json"), "ailurus_tone"),
          (str(ROOT / "ailurus_tone" / "web"), "ailurus_tone/web"),

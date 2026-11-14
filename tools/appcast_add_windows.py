@@ -25,7 +25,8 @@ def add_windows(feed: str, url: str, signed: str) -> str:
     mac = m.group(0)
     if 'sparkle:os="windows' in feed:          # (release notes may well say "Windows")
         raise ValueError("the appcast already has a Windows item")
-    sig = re.fullmatch(r'\s*sparkle:edSignature="([^"]+)"\s+length="(\d+)"\s*', signed)
+    # quotes optional: Windows PowerShell 5.1 strips them from native-program arguments
+    sig = re.fullmatch(r'\s*sparkle:edSignature="?([A-Za-z0-9+/=]+)"?\s+length="?(\d+)"?\s*', signed)
     if not sig:
         raise ValueError(f"unexpected sign_update output: {signed!r}")
     enclosure = re.search(r"<enclosure\b[^>]*/>", mac)

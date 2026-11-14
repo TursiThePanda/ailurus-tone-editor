@@ -13,11 +13,15 @@ import os
 import sys
 from pathlib import Path
 
-FEED_URL = os.environ.get("AILURUS_FEED_URL") or \
-    "https://github.com/TursiThePanda/ailurus-tone-editor/releases/latest/download/appcast.xml"
+DEFAULT_FEED_URL = "https://github.com/TursiThePanda/ailurus-tone-editor/releases/latest/download/appcast.xml"
 # Private half: David's login Keychain (account "ailurus-tone-editor") and the repository
-# secret SPARKLE_ED_PRIVATE_KEY. The env override is for local tests with a throwaway key.
-PUBLIC_KEY = os.environ.get("AILURUS_SPARKLE_PUBLIC_KEY") or "SXtYux7aYW1uqXfGmQ53urbMglj07Rl8THr8bc+8Wx4="
+# secret SPARKLE_ED_PRIVATE_KEY.
+DEFAULT_PUBLIC_KEY = "SXtYux7aYW1uqXfGmQ53urbMglj07Rl8THr8bc+8Wx4="
+# A BUILD can be pointed at a local feed and a throwaway key (update tests) with these
+# variables; the packaging spec bakes the result into the app (Info.plist / build_info.json),
+# so the variables mean nothing to an installed app.
+FEED_URL = os.environ.get("AILURUS_FEED_URL") or DEFAULT_FEED_URL
+PUBLIC_KEY = os.environ.get("AILURUS_SPARKLE_PUBLIC_KEY") or DEFAULT_PUBLIC_KEY
 CHECK_INTERVAL = 86400                      # once a day
 
 _controller = None                          # macOS: SPUStandardUpdaterController
@@ -76,8 +80,10 @@ def _win_start(on_quit):
     from .about import build_info
     ws = ctypes.CDLL(str(path))
     info = build_info()
-    ws.win_sparkle_set_appcast_url(FEED_URL.encode())
-    if not ws.win_sparkle_set_eddsa_public_key(PUBLIC_KEY.encode()):
+    feed = info.get("feed_url") or DEFAULT_FEED_URL      # baked in at build time
+    key = info.get("public_key") or DEFAULT_PUBLIC_KEY
+    ws.win_sparkle_set_appcast_url(feed.encode())
+    if not ws.win_sparkle_set_eddsa_public_key(key.encode()):
         return                              # never run an updater that cannot verify
     ws.win_sparkle_set_app_details.argtypes = [ctypes.c_wchar_p] * 3
     ws.win_sparkle_set_app_details("David Urban", "Ailurus Tone Editor", info["version"])

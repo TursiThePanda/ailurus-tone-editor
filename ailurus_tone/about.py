@@ -47,7 +47,7 @@ LIBRARIES = [
 def about(port: int, can_update: bool) -> dict:
     info = build_info()
     return {
-        **info,
+        "version": info["version"], "build": info["build"],
         "platform": {"darwin": "macOS", "win32": "Windows"}.get(sys.platform, sys.platform),
         "mcp_url": f"http://127.0.0.1:{port}/mcp",
         "can_update": can_update,
