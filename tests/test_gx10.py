@@ -6,7 +6,16 @@ import pytest
 
 from ailurus_tone.locate import BTSError
 from ailurus_tone.roland import add7, checksum, from7, to7
-from ailurus_tone.units.gx10 import BLOCK_INDEX, BLOCKS, GX10, encode_value, read_value, slot_label, user_base
+from ailurus_tone.units.gx10 import (
+    BLOCK_INDEX,
+    BLOCKS,
+    GX10,
+    encode_value,
+    nibbles4,
+    read_value,
+    slot_label,
+    user_base,
+)
 from ailurus_tone.units.gx10_bts import Tables, find_bts_root
 
 
@@ -176,3 +185,43 @@ def test_reorder_refused_with_branches(tables):
     with pytest.raises(ValueError):
         gx.set_chain([3, 2, 1])
     assert gx.port.sent == []
+
+
+class UnitPort(FakePort):
+    """A GX-10 that is on patch `current` and answers every other read with zeros."""
+
+    def __init__(self, current):
+        super().__init__()
+        self.current = current
+
+    def dt1(self, addr, data, pause=0.0):
+        super().dt1(addr, data, pause)
+        if list(addr) == [0, 0, 0, 0]:                 # CURRENT_PATCH: the unit switches
+            self.current = (data[0] << 12) | (data[1] << 8) | (data[2] << 4) | data[3]
+
+    def rq1(self, addr, size, timeout=0.0):
+        if list(addr) == [0, 0, 0, 0]:
+            return nibbles4(self.current)
+        return [0] * size
+
+
+def test_own_patch_select_echo_is_not_logged(tables):
+    """In editor mode the GX-10 reports our own patch select back (once or twice, seconds later);
+    that is not a switch made on the unit."""
+    gx = make_gx(tables, ["GRAPHIC EQUALIZER"])
+    gx.port = UnitPort(195)
+    gx.select_patch(194)
+    assert [e["who"] for e in gx.log.since(0)] == ["you"]
+    gx._unsolicited([0, 0, 0, 0], nibbles4(194))    # the echo, after the switch finished
+    gx._unsolicited([0, 0, 0, 0], nibbles4(194))
+    assert [(e["who"], e["action"]) for e in gx.log.since(0)] == [("you", "patch")]
+
+
+def test_switch_on_the_unit_is_logged(tables):
+    gx = make_gx(tables, ["GRAPHIC EQUALIZER"])
+    gx.port = UnitPort(195)
+    gx.port.current = 10                             # the player stepped to U04-2 on the unit
+    gx._unsolicited([0, 0, 0, 0], nibbles4(10))
+    ev = gx.log.since(0)
+    assert [(e["who"], e["action"], e["patch"]) for e in ev] == [("unit", "patch", "U04-2")]
+    assert gx.current == 10
