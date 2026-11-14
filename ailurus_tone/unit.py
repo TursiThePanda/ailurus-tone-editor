@@ -79,6 +79,7 @@ class RolandUnit:
         self.history: dict[int, dict] = {}     # patch -> {"undo": [Change], "redo": [Change]}
         self.edited = False
         self.error: str | None = None
+        self._selecting: int | None = None     # patch we are switching to; the unit echoes it back
 
     # ---- connection ----------------------------------------------------------------
     def connect(self):
@@ -149,6 +150,34 @@ class RolandUnit:
 
     def _unsolicited(self, addr, data):
         """A DT1 the unit sent by itself (editor mode): a knob, a switch, a patch change."""
+
+    # ---- patch switches ------------------------------------------------------------------------
+    def switch_patch(self, n: int, send, who: str):
+        """Switch to patch n: `send()` sends the unit's own select command. In editor mode the unit
+        then reports the new patch number back, as if the switch had been made on the unit;
+        unit_switched_patch() recognises that echo by `_selecting`."""
+        with self.lock:
+            self._selecting = n
+            try:
+                send()
+                self.reload()
+                self._log(who, "patch")
+            finally:
+                time.sleep(0.2)                    # let a late echo still find _selecting set
+                self._selecting = None
+
+    def unit_switched_patch(self, n: int | None):
+        """The unit reports (editor mode) that it is on patch n. Not news when it is our own select
+        echoed back, or the patch we are already on with nothing edited; a re-select of the same
+        patch on the unit with edits does count (the unit threw the edits away)."""
+        if n is not None and (n == self._selecting or (n == self.current and not self.edited)):
+            return
+        time.sleep(0.3)
+        self.reload()
+        self._log("unit", "patch")
+
+    def _log(self, who: str, action: str, **extra):
+        raise NotImplementedError
 
     # ---- patches -----------------------------------------------------------------------------
     def label(self) -> str:

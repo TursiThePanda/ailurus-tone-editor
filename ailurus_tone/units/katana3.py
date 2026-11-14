@@ -100,7 +100,6 @@ class Katana(RolandUnit):
 
     def __init__(self, tables: KatanaTables, on_event=None, log=None):
         super().__init__(tables, on_event=on_event, log=log)
-        self._selecting: int | None = None     # patch we asked for; the amp echoes it back
         labels = next((r for r in tables.resources if r and r[0] == "PANEL" and len(r) == NUM_PATCHES), None)
         if not labels:
             raise BTSError("patch labels (PANEL, A: CH1, ...) not found in KATANA resource.js")
@@ -392,26 +391,13 @@ class Katana(RolandUnit):
         """Switch the amp to memory n (0 = PANEL, 1..8 = A:CH1..B:CH4). Unsaved edits are lost."""
         if not 0 <= n < NUM_PATCHES:
             raise ValueError(f"patch must be 0..{NUM_PATCHES - 1} ({', '.join(self.labels)})")
-        with self.lock:
-            self._selecting = n
-            try:
-                self.port.dt1(PATCH_SELECT, [0, n], pause=0.5)
-                self.reload()
-                self._log(who, "patch")
-            finally:
-                time.sleep(0.2)                    # let a late echo find _selecting still set
-                self._selecting = None
+        self.switch_patch(n, lambda: self.port.dt1(PATCH_SELECT, [0, n], pause=0.5), who)
 
     # ---- the amp's own changes (editor mode) -------------------------------------
     def _unsolicited(self, addr, data):
         a = from7(addr)
         if a == from7(SETUP):                      # patch switched on the amp
-            n = (data[0] & 15) << 4 | (data[1] & 15) if len(data) >= 2 else None
-            if n is not None and n in (self.current, self._selecting):
-                return                             # our own PATCH_SELECT echoed back
-            time.sleep(0.3)
-            self.reload()
-            self._log("unit", "patch")
+            self.unit_switched_patch((data[0] & 15) << 4 | (data[1] & 15) if len(data) >= 2 else None)
             return
         if a == from7(PATCH_WRITE):                # the player stored a memory on the amp
             time.sleep(0.5)

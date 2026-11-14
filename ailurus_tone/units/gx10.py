@@ -7,8 +7,6 @@ Facts proven on the unit 2026-11-06..12:
 """
 from __future__ import annotations
 
-import time
-
 from ..roland import NotConnected, add7, from7
 from ..rolandbts import decode, encode
 from ..unit import Change, RolandUnit
@@ -44,6 +42,11 @@ def slot_label(n: int) -> str:
 
 def user_base(n: int) -> list[int]:
     return add7(USER_BASE, n * SLOT_STRIDE)
+
+
+def nibbles4(n: int) -> list[int]:
+    """Patch number as the GX-10 sends and takes it: four 4-bit nibbles."""
+    return [(n >> 12) & 15, (n >> 8) & 15, (n >> 4) & 15, n & 15]
 
 
 def read_value(block: list[int], p: dict) -> int:
@@ -327,18 +330,13 @@ class GX10(RolandUnit):
         """Switch the unit to user patch n (0-based). Unsaved temp edits are lost."""
         if not 0 <= n < VISIBLE_USER:
             raise ValueError(f"patch must be 0..{VISIBLE_USER - 1}")
-        with self.lock:
-            self.port.dt1(CURRENT_PATCH, [(n >> 12) & 15, (n >> 8) & 15, (n >> 4) & 15, n & 15], pause=0.6)
-            self.reload()
-            self._log(who, "patch")
+        self.switch_patch(n, lambda: self.port.dt1(CURRENT_PATCH, nibbles4(n), pause=0.6), who)
 
     # ---- unit panel changes --------------------------------------------------
     def _unsolicited(self, addr, data):
         a = from7(addr)
-        if a == 0 and len(data) >= 4:              # patch switched on the unit
-            time.sleep(0.3)
-            self.reload()
-            self._log("unit", "patch")
+        if a == 0 and len(data) >= 4:              # patch switched on the unit (or our own select echoed)
+            self.unit_switched_patch((data[0] & 15) << 12 | (data[1] & 15) << 8 | (data[2] & 15) << 4 | data[3] & 15)
         elif from7(TEMP) <= a < from7(USER_BASE):  # knob turned on the unit -> refresh temp
             self.apply_unit_write(a - from7(TEMP), data)
 
