@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import time
 
+from .. import ir
 from ..roland import NotConnected, add7, from7
 from ..rolandbts import decode, encode
 from ..unit import Change, RolandUnit
@@ -349,7 +350,11 @@ class GX10(RolandUnit):
     def store(self, n: int):
         if n not in self.writable_slots():
             raise ValueError(f"patch must be 0..{VISIBLE_USER - 1}")
-        self.port.dt1_ack(PATCH_WRITE, [n >> 7, n & 0x7F], timeout=5.0)
+        try:
+            self.port.dt1_ack(PATCH_WRITE, [n >> 7, n & 0x7F], timeout=5.0)
+        except TimeoutError:                       # still storing the previous save: once more
+            time.sleep(2.0)
+            self.port.dt1_ack(PATCH_WRITE, [n >> 7, n & 0x7F], timeout=5.0)
 
     def load_into_current(self, blocks):
         """Write a whole patch into TEMP. An effect block goes in two steps (type + switch,
@@ -371,6 +376,50 @@ class GX10(RolandUnit):
             else:
                 self.port.dt1(base, data, pause=0.1)
         time.sleep(0.5)
+
+    # ---- cabinet IRs: 16 user IR slots (format and transfer in ir.py) -----------
+    def ir_names(self) -> list[str]:
+        """Names of USER 1..16. An empty slot is called "USER n"; the IR itself cannot be read."""
+        with self.lock:
+            raw = [self.port.rq1(ir.slot_base(n), ir.NAME_LEN) for n in range(ir.NUM_SLOTS)]
+        return ["".join(chr(c) if 32 <= c < 127 else " " for c in r).rstrip() for r in raw]
+
+    @staticmethod
+    def ir_slot_empty(slot: int, name: str) -> bool:
+        return name.strip().upper() in ("", f"USER {slot + 1}")
+
+    def rename_ir(self, slot: int, name: str, who: str = "you") -> dict:
+        ir.slot_base(slot)                         # USER 1..16 only
+        name = ir.clean_name(name)
+        with self.lock:
+            old = self.ir_names()[slot]
+            self.port.dt1(ir.slot_base(slot), ir.name_bytes(name), pause=0.2)
+            got = self.ir_names()[slot]
+        if got != name:
+            raise RuntimeError(f"USER {slot + 1} reads back as \"{got}\", not \"{name}\".")
+        self.log.add(who=who, action="ir_rename", patch=f"IR USER {slot + 1}", name=name, old=old, device=self.title)
+        self.on_event("ir", {})
+        return {"slot": slot, "name": name}
+
+    def load_ir(self, slot: int, name: str, words, who: str = "you", replace: bool = False) -> dict:
+        """Write a converted IR (ir.convert) into USER slot+1. The old IR cannot be read back, so
+        a slot that holds one is overwritten only with replace=True (the player confirmed)."""
+        ir.slot_base(slot)                         # USER 1..16 only
+        name = ir.clean_name(name)
+        if len(words) != ir.NUM_WORDS:
+            raise ValueError(f"An IR has {ir.NUM_WORDS} values, not {len(words)}.")
+        with self.lock:
+            old = self.ir_names()[slot]
+            if not replace and not self.ir_slot_empty(slot, old):
+                raise ValueError(f"IR USER {slot + 1} holds \"{old}\", which cannot be backed up from the "
+                                 f"unit. Confirm that it may be replaced.")
+            ir.send(self.port, slot, name, words)
+            got = self.ir_names()[slot]
+        if got != name:
+            raise RuntimeError(f"The IR was sent, but USER {slot + 1} reads back as \"{got}\".")
+        self.log.add(who=who, action="ir_load", patch=f"IR USER {slot + 1}", name=name, old=old, device=self.title)
+        self.on_event("ir", {})
+        return {"slot": slot, "name": name, "replaced": old}
 
     # ---- unit panel changes --------------------------------------------------
     def _unsolicited(self, addr, data):

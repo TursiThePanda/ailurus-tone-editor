@@ -14,6 +14,7 @@ dependencies = [
     "uvicorn>=0.31",
     "starlette>=0.48",
     "pywebview>=6.2",
+    "numpy>=2.1",   # ir.py: cabinet IR fit
 ]
 
 [project.optional-dependencies]

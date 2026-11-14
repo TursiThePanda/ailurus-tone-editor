@@ -47,6 +47,8 @@ function renderTop() {
   const busy = !!state?.backup?.running;
   $("saveBtn").disabled = !(c && state.patch.edited && state.patch.can_save) || busy;
   $("saveAsBtn").disabled = !(c && (state.writable || []).length) || busy;
+  $("irBtn").classList.toggle("hidden", !(c && state.has_ir));
+  $("irBtn").disabled = busy;
   for (const id of ["backupBtn", "exportBtn"]) $(id).disabled = !c || !!state.backup?.running || !state.can_backup;
   renderDevices();
   // a connection problem stays shown until a unit is connected; a flash() message keeps its own timer
@@ -122,6 +124,8 @@ const WHO_HELP = { you: "You, in this window", ai: "An AI through MCP", unit: "A
 function describeEvent(e) {
   const dev = e.device && e.device !== state?.device_title ? `<span class="act">${esc(e.device)}</span> ` : "";
   if (e.action === "patch") return `${dev}→ ${esc(e.patch)} ${esc(e.name)}`;
+  if (e.action === "ir_load") return `${dev}<span class="act">IR loaded</span> ${esc(e.patch)} ${esc(e.name)}`;
+  if (e.action === "ir_rename") return `${dev}<span class="act">IR renamed</span> ${esc(e.patch)} ${esc(e.old)} → ${esc(e.name)}`;
   if (e.action === "save") return `${dev}<span class="act">saved</span> ${esc(e.patch)} ${esc(e.name)}`;
   if (e.param === "CHAIN") {
     const verb = e.action === "set" ? "" : `<span class="act">${e.action}</span> `;
@@ -300,6 +304,55 @@ $("saveGo").onclick = async () => {
   catch (e) { $("saveErr").textContent = e.message; }
   finally { $("saveGo").disabled = false; }
 };
+// ---- GX-10 cabinet IRs --------------------------------------------------------------
+const IR_NAME_LEN = 12;
+function irDefaultName(file) {
+  return file.replace(/\.[^.]*$/, "").replace(/[^\x20-\x7e]/g, "").trim().slice(0, IR_NAME_LEN).trim();
+}
+async function loadIrs() {
+  const box = $("irList");
+  try {
+    const { slots } = await api("/api/ir");
+    box.innerHTML = slots.map((s) => `<div class="orow"><span class="grow"><b>${esc(s.label)}</b>
+      ${s.empty ? '<span class="muted">empty</span>' : esc(s.name)}
+      ${s.source ? `<span class="muted">· ${esc(s.source)}</span>` : ""}</span>
+      <button type="button" data-load="${s.slot}">Load .wav…</button>
+      <button type="button" data-rename="${s.slot}"${s.empty ? " disabled" : ""}>Rename</button></div>`).join("");
+    box.querySelectorAll("button[data-load]").forEach((b) => (b.onclick = () => irLoad(slots[+b.dataset.load])));
+    box.querySelectorAll("button[data-rename]").forEach((b) => (b.onclick = () => irRename(slots[+b.dataset.rename])));
+  } catch (e) { box.textContent = e.message; }
+}
+function irBusy(on) { $("irList").querySelectorAll("button").forEach((b) => (b.disabled = on)); }
+function irLoad(s) {
+  const inp = document.createElement("input");
+  inp.type = "file"; inp.accept = ".wav,audio/wav";
+  inp.onchange = async () => {
+    const f = inp.files[0]; if (!f) return;
+    const name = (prompt(`Name for ${s.label} (up to ${IR_NAME_LEN} characters):`, irDefaultName(f.name)) || "").trim();
+    if (!name) return;
+    if (!s.empty && !confirm(`${s.label} holds "${s.name}". The unit cannot give it back, so it cannot be backed up. Replace it with ${f.name}?`)) return;
+    irBusy(true); $("irErr").textContent = ""; $("irList").insertAdjacentHTML("afterbegin", '<div class="muted irwait">Converting and sending…</div>');
+    try {
+      const q = `slot=${s.slot}&file=${encodeURIComponent(f.name)}&name=${encodeURIComponent(name)}${s.empty ? "" : "&replace=1"}`;
+      const r = await fetch(`/api/ir/load?${q}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: f });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || r.statusText);
+      flash(`${s.label} "${j.name}" loaded (fit within ${j.error_db} dB of the file).`); lastVersion = -1;
+    } catch (e) { $("irErr").textContent = e.message; }
+    loadIrs();
+  };
+  inp.click();
+}
+async function irRename(s) {
+  const name = (prompt(`New name for ${s.label} (up to ${IR_NAME_LEN} characters):`, s.name) || "").trim();
+  if (!name || name === s.name) return;
+  irBusy(true); $("irErr").textContent = "";
+  try { await api("/api/ir/rename", { slot: s.slot, name }); lastVersion = -1; }
+  catch (e) { $("irErr").textContent = e.message; }
+  loadIrs();
+}
+$("irBtn").onclick = () => { $("irErr").textContent = ""; $("irList").textContent = "Loading…"; $("irDlg").showModal(); loadIrs(); };
+
 async function loadOverwritten() {
   const box = $("overwrittenList");
   if (!state?.connected) { box.innerHTML = '<span class="muted">Connect a unit to see its replaced patches.</span>'; return; }

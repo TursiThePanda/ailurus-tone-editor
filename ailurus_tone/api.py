@@ -146,6 +146,25 @@ def register(mcp: MCPServer, s: State):
         b = await _body(req)
         return await _run(lambda: s.put_back(str(b["file"])))
 
+    @route("/api/ir", methods=["GET"])
+    async def ir_slots(_: Request) -> Response:
+        return await _run(s.ir_slots)
+
+    @route("/api/ir/load", methods=["POST"])
+    async def ir_load(req: Request) -> Response:
+        """A .wav as the raw body; ?slot=0..15&file=<file name>&name=<IR name>&replace=1."""
+        q = req.query_params
+        data = await req.body()
+        if not data or len(data) > 50_000_000:
+            return JSONResponse({"error": "Choose a .wav file (an impulse response)."}, status_code=400)
+        return await _run(lambda: s.ir_load(int(q.get("slot", -1)), data, q.get("file", ""), q.get("name") or None,
+                                            replace=q.get("replace") == "1"))
+
+    @route("/api/ir/rename", methods=["POST"])
+    async def ir_rename(req: Request) -> Response:
+        b = await _body(req)
+        return await _run(lambda: s.ir_rename(int(b["slot"]), str(b["name"])))
+
     @route("/api/about", methods=["GET"])
     async def about_app(_: Request) -> Response:
         return JSONResponse(about(getattr(s, "port", 8710), updater.available())

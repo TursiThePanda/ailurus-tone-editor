@@ -320,6 +320,70 @@ class State:
         self.bump()
         return r
 
+    # ---- GX-10 cabinet IRs (the player's action only; the AI may only list them) ----
+    def _ir_unit(self, device: str | None = None):
+        d = self.need(device)
+        if not hasattr(d, "ir_names"):
+            raise ValueError(f"The {d.title} has no user IR slots.")
+        return d
+
+    def ir_dir(self) -> Path:
+        return Path(load_config()["backup_dir"]).expanduser() / "IR"
+
+    def _ir_records(self) -> list[dict]:
+        out = []
+        for f in sorted(self.ir_dir().glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True):
+            try:
+                out.append(json.loads(f.read_text()))
+            except (ValueError, OSError):
+                continue
+        return out
+
+    def ir_slots(self, device: str | None = None) -> dict:
+        """The 16 IR slots: name, whether empty, and which WAV Ailurus last loaded under that name."""
+        d = self._ir_unit(device)
+        names = d.ir_names()
+        recs = self._ir_records()
+        slots = []
+        for n, name in enumerate(names):
+            rec = next((r for r in recs if r.get("slot") == n and r.get("name") == name), None)
+            slots.append({"slot": n, "label": f"USER {n + 1}", "name": name, "empty": d.ir_slot_empty(n, name),
+                          "source": rec and rec.get("source"), "loaded": rec and rec.get("created")})
+        return {"slots": slots}
+
+    def ir_load(self, slot: int, data: bytes, source: str = "", name: str | None = None,
+                replace: bool = False) -> dict:
+        """Convert a WAV (ir.convert), keep the result in <backup_dir>/IR (the unit cannot give
+        an IR back) and write it into the slot."""
+        from datetime import datetime
+
+        from . import ir
+        d = self._ir_unit()
+        slot = int(slot)
+        ir.slot_base(slot)
+        conv = ir.convert(data)
+        name = ir.clean_name(name or Path(source).stem or f"IR {slot + 1}")
+        folder = self.ir_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        rec = {"format": "ailurus-ir-1", "device": d.title, "slot": slot, "name": name, "source": Path(source).name,
+               "created": datetime.now().isoformat(timespec="seconds"), "error_db": conv["error_db"],
+               "words": conv["words"]}
+        out = folder / f"USER{slot + 1:02d}_{stamp}.json"
+        k = 2
+        while out.exists():
+            out = folder / f"USER{slot + 1:02d}_{stamp}_{k}.json"
+            k += 1
+        r = d.load_ir(slot, name, conv["words"], replace=replace)
+        out.write_text(json.dumps(rec))
+        self.bump()
+        return r | {"error_db": conv["error_db"], "file": str(out)}
+
+    def ir_rename(self, slot: int, name: str) -> dict:
+        r = self._ir_unit().rename_ir(int(slot), name)
+        self.bump()
+        return r
+
     def devices_status(self) -> list[dict]:
         out = [{"id": i, "title": d.title, "connected": self._ready(d), "active": i == self.active,
                 "readonly": d.readonly, "can_backup": d.supports_backup,
@@ -347,6 +411,7 @@ class State:
             s["patch"] = d.summary()
             labels = d.slot_labels()
             s["patch"]["can_save"] = not d.readonly and d.current in d.writable_slots()
+            s["has_ir"] = hasattr(d, "ir_names")
             s["writable"] = [{"slot": n, "label": labels[n], "name": d.names[n] if n < len(d.names) else ""}
                              for n in d.writable_slots()] if not d.readonly else []
         return s

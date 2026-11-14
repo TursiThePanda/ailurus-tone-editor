@@ -95,7 +95,8 @@ Streamable HTTP at `http://127.0.0.1:8710/mcp` while the app runs. Tools: `gx_st
 `gx_select_patch`, `gx_select_device`, `gx_backup_all`, `gx_set_chain` (reorder a straight chain), `gx_history`
 (what the player, the unit and the AI changed, including undo; kept in `<config>/history/*.jsonl`),
 `gx_save` (store the current sound in a slot; refused unless the player turned on
-Settings → General → "Let the AI save patches", off by default).
+Settings → General → "Let the AI save patches", off by default), `gx_list_irs` (GX-10 user
+cabinet IR slots, read-only).
 
 Claude Code: `claude mcp add --transport http ailurus-tone http://127.0.0.1:8710/mcp`
 
@@ -109,6 +110,12 @@ Claude Code: `claude mcp add --transport http ailurus-tone http://127.0.0.1:8710
 - Undo/Redo (Cmd/Ctrl+Z), one knob drag = one step; a history of every change by you, the AI
   or a knob on the unit, which the AI can read.
 - Drag effects to reorder a straight chain.
+- GX-10 **Cabinet IRs**: load your own cabinet IR (.wav) into USER 1..16, rename a slot. The
+  GX-10 does not play the file: it holds a small cabinet model (filters), so Ailurus fits that
+  model to the IR's frequency response with its own converter (`ir.py`), as BOSS TONE STUDIO
+  does with its own. The unit cannot send an IR back, so a slot that holds one is replaced only
+  after you confirm; each IR Ailurus loads is kept in `<backup folder>/IR`. A patch uses a slot
+  with AIRD PREAMP → SP TYPE = USER n.
 - Bulk backup of all 198 user patches (U01-1..U66-3) to the default folder or a chosen one.
 - KATANA Gen 3: live edits of every block (edit buffer), Save to A:CH1..B:CH4,
   patch switching (PANEL, A:CH1..B:CH4), signal order shown as on the amp, backup of all
@@ -125,6 +132,7 @@ Claude Code: `claude mcp add --transport http ailurus-tone http://127.0.0.1:8710
     ailurus_tone/units/         one module per unit + the registry (UNITS in __init__.py)
       gx10.py, gx10_bts.py        GX-10: patch layout, free chain, live edits; tables from effect_parameter.js
       katana3.py, katana3_bts.py  KATANA Gen 3: edit buffer, variations, chain; tables from the BTS window
+    ailurus_tone/ir.py          GX-10 cabinet IRs: WAV reader, model fit (numpy), IR slot transfer
     ailurus_tone/backup.py      bulk backup + app config
     ailurus_tone/state.py       one owner of all units; active unit, connect/disconnect watcher
     ailurus_tone/mcp_tools.py   MCP tools

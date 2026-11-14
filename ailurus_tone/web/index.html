@@ -20,6 +20,7 @@
   <button id="redoBtn" title="Redo (Cmd/Ctrl+Shift+Z)">Redo</button>
   <button id="saveBtn" data-help="Store what you hear in this patch slot. The old version is backed up first.">Save</button>
   <button id="saveAsBtn" data-help="Store what you hear in another slot, under a name you choose.">Save as…</button>
+  <button id="irBtn" class="hidden" data-help="The GX-10's 16 user cabinet IRs: load your own .wav into a slot, rename it. A patch uses one through AIRD PREAMP SP TYPE = USER 1..16.">Cabinet IRs</button>
   <button id="backupBtn" data-help="Back up every stored patch of this unit into the default backup folder.">Back up</button>
   <button id="exportBtn" data-help="Back up all patches into a folder you choose.">Export to…</button>
   <button id="settingsBtn" aria-label="Settings">Settings</button>
@@ -88,6 +89,19 @@
     <div id="saveWarn" class="small muted"></div>
     <div id="saveErr" class="small err"></div>
     <div class="row end"><button value="cancel">Cancel</button><button type="button" id="saveGo">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="irDlg">
+  <form method="dialog">
+    <h3>Cabinet IRs</h3>
+    <p class="small muted">Load a cabinet impulse response (.wav, 44.1/48/96 kHz) into one of the 16 user slots.
+      The GX-10 does not play the file itself: Ailurus fits the unit's cabinet model to it, like BOSS TONE STUDIO does.
+      A patch picks the slot with AIRD PREAMP → SP TYPE = USER 1..16. The unit cannot give an IR back, so the IR a
+      slot holds now cannot be backed up; each one Ailurus loads is kept in your backup folder under IR.</p>
+    <div id="irList" class="small">Loading…</div>
+    <div id="irErr" class="small err"></div>
+    <div class="row end"><button value="cancel">Close</button></div>
   </form>
 </dialog>
 

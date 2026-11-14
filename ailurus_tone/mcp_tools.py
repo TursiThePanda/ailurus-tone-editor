@@ -22,7 +22,9 @@ INSTRUCTIONS = (
     "(heard instantly, not stored in any patch slot; switching patch discards them). "
     "Read the patch first (gx_read_patch) to learn fx numbers, parameter names and ranges. "
     "Use option names for list parameters (e.g. 'ON'), numbers for ranges. "
-    "Use gx_undo to take back the last change. This version cannot save to a slot. "
+    "Use gx_undo to take back the last change. Storing to a slot (gx_save) works only when the "
+    "player allowed it in Settings. GX-10 cabinet IRs: gx_list_irs shows the 16 user IR slots "
+    "(AIRD PREAMP SP TYPE = USER 1..16); only the player loads IRs, in the app window. "
     "The player also edits by hand (in the app window or on the unit's knobs) and may undo your "
     "changes: call gx_history before suggesting the next step to see what they did since."
 )
@@ -133,6 +135,14 @@ def register(mcp: MCPServer, s: State):
         on Settings → General → "Let the AI save patches"; otherwise it returns an error. The old
         patch is backed up first; the player can put it back in the window."""
         return _safe(lambda: s.save_patch(s.need(device).parse_slot(slot), name, who="ai", device=device))
+
+    @mcp.tool()
+    def gx_list_irs(device: str | None = None) -> dict:
+        """GX-10 only: the 16 user cabinet IR slots (USER 1..16) with their names, whether each
+        is empty and which .wav Ailurus loaded there. A patch uses one through AIRD PREAMP
+        "SP TYPE" = USER n (the mic settings do not apply to user IRs). Read-only: loading or
+        renaming an IR is the player's action in the app window (Cabinet IRs)."""
+        return _safe(lambda: s.ir_slots(device))
 
     @mcp.tool()
     def gx_backup_all() -> dict:
