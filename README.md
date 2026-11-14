@@ -76,11 +76,12 @@ Claude Code: `claude mcp add --transport http ailurus-tone http://127.0.0.1:8710
 ## Layout
 
     ailurus_tone/locate.py      find each unit's BOSS TONE STUDIO (Settings, usual places, registry)
-    ailurus_tone/bts.py         load tables from the installed BOSS TONE STUDIO (embedded V8)
+    ailurus_tone/rolandbts.py   what every BOSS TONE STUDIO shares: product_setting.js, address_map.js, values
     ailurus_tone/roland.py      generic Roland SysEx RQ1/DT1 transport (device independent)
-    ailurus_tone/device.py      GX-10 profile: addresses, patch layout, decode, live edits, undo
-    ailurus_tone/katana_bts.py  KATANA Gen 3 tables from its installed BOSS TONE STUDIO
-    ailurus_tone/katana.py      KATANA Gen 3 profile: edit buffer, variations, chain, patches
+    ailurus_tone/unit.py        RolandUnit: connection, undo/redo, edited-vs-saved, diary, backup interface
+    ailurus_tone/units/         one module per unit + the registry (UNITS in __init__.py)
+      gx10.py, gx10_bts.py        GX-10: patch layout, free chain, live edits; tables from effect_parameter.js
+      katana3.py, katana3_bts.py  KATANA Gen 3: edit buffer, variations, chain; tables from the BTS window
     ailurus_tone/backup.py      bulk backup + app config
     ailurus_tone/state.py       one owner of all units; active unit, connect/disconnect watcher
     ailurus_tone/mcp_tools.py   MCP tools
@@ -90,10 +91,19 @@ Claude Code: `claude mcp add --transport http ailurus-tone http://127.0.0.1:8710
     ailurus_tone/help/          short hover help texts (en, cs) - our own words
     ailurus_tone/history.py     activity log (what changed, by whom), read by the AI
     tools/make_icon.py          builds the app icon (Icon Composer layers, icns, ico)
+    tools/probe_unit.py         read-only first look at a unit not supported yet (BTS tables, identity, RQ1)
     ailurus_tone/updater.py     Sparkle automatic updates (packaged macOS app only)
     packaging/                  PyInstaller spec + build_macos.sh (.app and .dmg, bundles Sparkle)
     .github/workflows/          release build: DMG + signed appcast.xml on a v* tag
     tests/                      unit tests, no unit needed
+
+## Other BOSS units
+
+Every BOSS TONE STUDIO is built on the same Roland framework, and the shared part is in
+`rolandbts.py` and `unit.py`. A new unit is one module in `ailurus_tone/units/` plus a line in
+the registry. [docs/adding-a-unit.md](docs/adding-a-unit.md) walks through it, starting with
+`tools/probe_unit.py`, which only reads. Pull requests are welcome; you need the unit and
+its BTS to test.
 
 ## Licence
 
