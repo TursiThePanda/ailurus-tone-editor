@@ -108,6 +108,7 @@ def _gx_exe_bytes():
     return b"MZ" + b"\0" * 100 + buf.getvalue()
 
 
+@pytest.mark.skipif(__import__("sys").platform == "win32", reason="the fake innoextract is a #! script")
 def test_linux_unpacks_the_bts_windows_installer(tmp_path, monkeypatch):
     """No BTS for Linux: its Windows installer (.exe or the .zip from boss.info) is unpacked with
     innoextract into our data folder. A fake innoextract writes what the real one does."""
